@@ -1,0 +1,618 @@
+
+import os
+import uuid
+import logging
+import time
+from typing import List, Optional
+from pathlib import Path
+
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Depends
+from fastapi.responses import JSONResponse, FileResponse
+from sqlalchemy.orm import Session
+
+from app.core.config import get_settings
+from app.core.database import get_db, SessionLocal
+from app.core.models import (
+    UploadResponse, DocumentStatus, ExtractionResult as ExtractionResultModel,
+    ChatRequest, ChatResponse, SummaryRequest, SummaryResponse,
+    AnalysisRequest, ChunkConfig, IndexResponse, ErrorResponse
+)
+from app.db.models import Document, DocumentChunk, User
+from app.api.auth import get_current_user
+from app.pdf.extractor import PDFExtractionPipeline
+from app.vector.pgvector_store import PgVectorStore
+from app.llm.sarvam_client import SarvamAIClient, RAGPipeline
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+settings = get_settings()
+
+pdf_pipeline = PDFExtractionPipeline(enable_ocr=settings.ocr_enabled)
+vector_store = PgVectorStore()
+llm_client = SarvamAIClient()
+rag_pipeline = RAGPipeline(vector_store, llm_client)
+
+extraction_cache: dict = {}
+
+
+async def process_document_bg(doc_id: int, python_doc_id: str, file_path: str):
+
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        if not doc:
+            return
+            
+        doc.status = "processing"
+        db.commit()
+        
+        try:
+            logger.info(f"Starting extraction for {python_doc_id}")
+            # 1. Extract
+            result = pdf_pipeline.extract(file_path, python_doc_id)
+            extraction_cache[python_doc_id] = {
+                "text_blocks": [{"text": b.text, "page": b.page, "type": b.block_type} for b in result.text_blocks],
+                "tables": [{"page": t.page, "rows": t.rows, "cols": t.cols, "data": t.data} for t in result.tables]
+            }
+            
+            # 2. Index
+            logger.info(f"Starting vector indexing for {python_doc_id}")
+            chunks = [
+                {
+                    "text": b["text"],
+                    "page": b["page"],
+                    "type": b.get("type", "text"),
+                    "section": b.get("section", "")
+                }
+                for b in extraction_cache[python_doc_id]["text_blocks"]
+            ]
+            
+            vector_store.index_document(
+                db=db,
+                doc_id=doc.id,
+                chunks=chunks,
+                chunk_size=512,
+                overlap=128
+            )
+            
+            
+            # 3. Generate Summary
+            logger.info(f"Generating summary for {python_doc_id}")
+            full_text = "\n".join(b["text"] for b in chunks)
+            if len(full_text.strip()) > 50:
+                try:
+                    summary_result = await llm_client.summarize(full_text, style="executive")
+                    if summary_result and summary_result.get("summary"):
+                        doc.extracted_summary = summary_result["summary"]
+                except Exception as sum_e:
+                    logger.warning(f"Summary generation failed: {sum_e}")
+            
+            # 4. Update Status
+            doc.status = "ready"
+            db.commit()
+            logger.info(f"Background processing completed for doc {python_doc_id}")
+            
+        except Exception as e:
+            doc.status = "error"
+            doc.error_message = str(e)
+            db.commit()
+            logger.error(f"Background processing failed for doc {python_doc_id}: {e}")
+    finally:
+        db.close()
+
+
+def get_upload_path() -> Path:
+    path = Path(settings.uploads_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@router.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "ok",
+        "version": "1.0.0",
+        "services": {
+            "pdf_extraction": "ready",
+            "pgvector": "ready",
+            "sarvam_llm": "ready" if settings.sarvam_api_key else "no_api_key"
+        }
+    }
+
+
+
+
+@router.get("/documents")
+async def list_documents(
+    page: int = 1,
+    limit: int = 20,
+    status: Optional[str] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Document).filter(Document.user_id == user.id)
+    if status:
+        query = query.filter(Document.status == status)
+    
+    total = query.count()
+    items = query.order_by(Document.uploaded_at.desc()).offset((page - 1) * limit).limit(limit).all()
+    
+    return {
+        "items": [
+            {
+                "id": doc.id,
+                "filename": doc.filename,
+                "original_name": doc.original_name,
+                "file_size": doc.file_size,
+                "file_type": doc.file_type,
+                "page_count": doc.page_count,
+                "python_doc_id": doc.python_doc_id,
+                "status": doc.status,
+                "extracted_summary": doc.extracted_summary,
+                "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
+            }
+            for doc in items
+        ],
+        "total": total,
+        "page": page,
+        "limit": limit,
+    }
+
+
+@router.get("/documents/{doc_id}")
+async def get_document(
+    doc_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get document metadata."""
+    doc = db.query(Document).filter(
+        Document.id == doc_id,
+        Document.user_id == user.id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    return {
+        "id": doc.id,
+        "filename": doc.filename,
+        "original_name": doc.original_name,
+        "page_count": doc.page_count,
+        "file_size": doc.file_size,
+        "status": doc.status,
+        "python_doc_id": doc.python_doc_id,
+        "extracted_summary": doc.extracted_summary,
+        "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
+    }
+
+
+@router.get("/documents/{python_doc_id}/download")
+async def download_document(
+    python_doc_id: str,
+    db: Session = Depends(get_db)
+):
+    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    file_path = Path(settings.uploads_dir) / doc.filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+        
+    return FileResponse(
+        path=file_path, 
+        media_type='application/pdf', 
+        filename=doc.original_name,
+        content_disposition_type="inline"
+    )
+
+
+@router.get("/documents/stats/overview")
+async def get_document_stats(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    docs = db.query(Document).filter(Document.user_id == user.id).all()
+    return {
+        "total": len(docs),
+        "ready": sum(1 for d in docs if d.status == "ready"),
+        "processing": sum(1 for d in docs if d.status == "processing"),
+        "error": sum(1 for d in docs if d.status == "error"),
+        "totalPages": sum(d.page_count or 0 for d in docs),
+    }
+
+
+@router.post("/documents/upload", response_model=UploadResponse)
+async def upload_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not file.filename or not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    
+    contents = await file.read()
+    max_size = settings.max_file_size_mb * 1024 * 1024
+    if len(contents) > max_size:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Max size: {settings.max_file_size_mb}MB"
+        )
+    
+    doc_uuid = str(uuid.uuid4())
+    upload_dir = get_upload_path()
+    file_path = upload_dir / f"{doc_uuid}.pdf"
+    
+    with open(file_path, "wb") as f:
+        f.write(contents)
+    
+    try:
+        import fitz
+        pdf_doc = fitz.open(str(file_path))
+        page_count = len(pdf_doc)
+        pdf_doc.close()
+    except Exception:
+        page_count = 0
+    
+    db_doc = Document(
+        user_id=user.id,
+        filename=doc_uuid + ".pdf",
+        original_name=file.filename,
+        file_size=len(contents),
+        file_type="application/pdf",
+        page_count=page_count,
+        python_doc_id=doc_uuid,
+        status="processing",
+    )
+    db.add(db_doc)
+    db.commit()
+    db.refresh(db_doc)
+    
+    background_tasks.add_task(process_document_bg, db_doc.id, doc_uuid, str(file_path))
+    
+    logger.info(f"Document uploaded and queued: {doc_uuid} - {file.filename}")
+    
+    return UploadResponse(
+        doc_id=doc_uuid,
+        filename=file.filename,
+        page_count=page_count,
+        status=DocumentStatus.PROCESSING
+    )
+
+
+@router.delete("/documents/{doc_id}")
+async def delete_document(
+    doc_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+
+    doc = db.query(Document).filter(
+        Document.id == doc_id,
+        Document.user_id == user.id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    try:
+        file_path = Path(settings.uploads_dir) / doc.filename
+        if file_path.exists():
+            os.remove(str(file_path))
+    except Exception as e:
+        logger.warning(f"Failed to delete file: {e}")
+    
+    vector_store.delete_document_chunks(db, doc.id)
+    
+    if doc.python_doc_id:
+        extraction_cache.pop(doc.python_doc_id, None)
+    
+    db.delete(doc)
+    db.commit()
+    
+    return {"message": "Document deleted successfully"}
+
+
+
+
+@router.post("/documents/{python_doc_id}/extract/full")
+async def extract_full(python_doc_id: str, db: Session = Depends(get_db)):
+
+    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    file_path = Path(settings.uploads_dir) / doc.filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="PDF file not found on disk")
+    
+    doc.status = "processing"
+    db.commit()
+    
+    try:
+        result = pdf_pipeline.extract(str(file_path), python_doc_id)
+        
+        extraction_result = {
+            "text_blocks": [
+                {
+                    "text": b.text,
+                    "page": b.page,
+                    "type": b.block_type,
+                    "confidence": b.confidence
+                }
+                for b in result.text_blocks
+            ],
+            "tables": [
+                {
+                    "page": t.page,
+                    "rows": t.rows,
+                    "cols": t.cols,
+                    "data": t.data,
+                    "confidence": t.confidence,
+                    "method": t.extraction_method
+                }
+                for t in result.tables
+            ],
+            "total_pages": result.total_pages,
+            "processing_time_ms": result.processing_time_ms,
+            "methods_used": result.methods_used,
+            "confidence": result.confidence,
+        }
+        
+        extraction_cache[python_doc_id] = extraction_result
+        doc.status = "ready"
+        db.commit()
+        
+        return extraction_result
+    
+    except Exception as e:
+        doc.status = "error"
+        doc.error_message = str(e)
+        db.commit()
+        logger.error(f"Extraction failed for {python_doc_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+
+
+@router.post("/documents/{python_doc_id}/extract/tables")
+async def extract_tables(python_doc_id: str, db: Session = Depends(get_db)):
+
+    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    file_path = Path(settings.uploads_dir) / doc.filename
+    try:
+        tables = pdf_pipeline.extract_tables_only(str(file_path))
+        return {
+            "tables": [
+                {
+                    "page": t.page,
+                    "rows": t.rows,
+                    "cols": t.cols,
+                    "data": t.data,
+                    "confidence": t.confidence,
+                    "method": t.extraction_method
+                }
+                for t in tables
+            ],
+            "total_tables": len(tables)
+        }
+    except Exception as e:
+        logger.error(f"Table extraction failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Table extraction failed: {str(e)}")
+
+
+@router.get("/documents/{python_doc_id}/text")
+async def get_text(python_doc_id: str, page: Optional[int] = None, db: Session = Depends(get_db)):
+
+    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Extract if not cached
+    if python_doc_id not in extraction_cache:
+        file_path = Path(settings.uploads_dir) / doc.filename
+        result = pdf_pipeline.extract(str(file_path), python_doc_id)
+        extraction_cache[python_doc_id] = {
+            "text_blocks": [
+                {"text": b.text, "page": b.page, "type": b.block_type}
+                for b in result.text_blocks
+            ]
+        }
+    
+    blocks = extraction_cache[python_doc_id]["text_blocks"]
+    if page is not None:
+        blocks = [b for b in blocks if b["page"] == page]
+    
+    pages_dict = {}
+    for block in blocks:
+        p = block["page"]
+        if p not in pages_dict:
+            pages_dict[p] = []
+        pages_dict[p].append(block)
+    
+    tables = extraction_cache[python_doc_id].get("tables", [])
+    if page is not None:
+        tables = [t for t in tables if t["page"] == page]
+    
+    return {
+        "pages": [
+            {"page_num": p, "blocks": page_blocks}
+            for p, page_blocks in sorted(pages_dict.items())
+        ],
+        "tables": tables,
+        "total_blocks": len(blocks)
+    }
+
+
+
+
+@router.post("/documents/{python_doc_id}/index")
+async def index_document(python_doc_id: str, config: ChunkConfig, db: Session = Depends(get_db)):
+    """Index document chunks into PostgreSQL+pgvector for semantic search."""
+    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    if python_doc_id not in extraction_cache:
+        file_path = Path(settings.uploads_dir) / doc.filename
+        result = pdf_pipeline.extract(str(file_path), python_doc_id)
+        extraction_cache[python_doc_id] = {
+            "text_blocks": [
+                {"text": b.text, "page": b.page, "type": b.block_type}
+                for b in result.text_blocks
+            ]
+        }
+    
+    chunks = [
+        {
+            "text": b["text"],
+            "page": b["page"],
+            "type": b.get("type", "text"),
+            "section": b.get("section", "")
+        }
+        for b in extraction_cache[python_doc_id]["text_blocks"]
+    ]
+    
+    result = vector_store.index_document(
+        db=db,
+        doc_id=doc.id,
+        chunks=chunks,
+        chunk_size=config.chunk_size,
+        overlap=config.overlap
+    )
+    
+    return IndexResponse(**result)
+
+
+@router.post("/documents/{python_doc_id}/search")
+async def search_document(python_doc_id: str, query: dict, db: Session = Depends(get_db)):
+
+    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    search_query = query.get("query", "")
+    top_k = query.get("top_k", 5)
+    
+    if not search_query:
+        raise HTTPException(status_code=400, detail="Query is required")
+    
+    results = vector_store.search(db, doc.id, search_query, top_k=top_k)
+    
+    return {
+        "results": results,
+        "total": len(results),
+        "query": search_query
+    }
+
+
+
+
+@router.post("/llm/chat")
+async def llm_chat(request: ChatRequest, db: Session = Depends(get_db)):
+
+    import httpx
+    try:
+        if request.use_rag:
+            doc = db.query(Document).filter(Document.python_doc_id == request.doc_id).first()
+            if not doc:
+                raise HTTPException(status_code=404, detail="Document not found")
+            
+            last_message = request.messages[-1] if request.messages else None
+            if last_message and last_message.role == "user":
+                result = await rag_pipeline.query(
+                    db=db,
+                    doc_id=doc.id,
+                    question=last_message.content,
+                    top_k=5
+                )
+                
+                return ChatResponse(
+                    response=result["answer"],
+                    sources=result["sources"],
+                    tokens_used=result["tokens_used"],
+                    latency_ms=result["latency_ms"]
+                )
+        
+        # Calling LLM directly without RAG
+        messages = [{"role": m.role, "content": m.content} for m in request.messages]
+        
+        start_time = time.time()
+        response = await llm_client.chat(messages)
+        latency_ms = int((time.time() - start_time) * 1000)
+        
+        return ChatResponse(
+            response=response.content,
+            tokens_used=response.tokens_used,
+            latency_ms=latency_ms
+        )
+    except httpx.HTTPStatusError as e:
+        error_msg = e.response.text
+        if e.response.status_code in (401, 403):
+            error_msg = "Invalid or missing Sarvam AI API Key. Please update SARVAM_API_KEY in the .env file."
+        raise HTTPException(status_code=502, detail=f"LLM API Error: {error_msg}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/documents/{python_doc_id}/extract/summary")
+async def extract_summary(python_doc_id: str, request: SummaryRequest, db: Session = Depends(get_db)):
+
+    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    if python_doc_id not in extraction_cache:
+        file_path = Path(settings.uploads_dir) / doc.filename
+        result = pdf_pipeline.extract(str(file_path), python_doc_id)
+        extraction_cache[python_doc_id] = {
+            "text_blocks": [{"text": b.text, "page": b.page} for b in result.text_blocks]
+        }
+    
+    all_text = "\n".join(
+        b["text"] for b in extraction_cache[python_doc_id]["text_blocks"]
+    )
+    
+    if len(all_text) < 100:
+        raise HTTPException(status_code=400, detail="Document has insufficient text for summary")
+    
+    summary_result = await llm_client.summarize(
+        text=all_text,
+        style=request.style,
+        focus_area=request.focus_area
+    )
+    
+    doc.extracted_summary = summary_result.get("summary", "")
+    db.commit()
+    
+    return summary_result
+
+
+@router.post("/llm/analyze")
+async def llm_analyze(request: AnalysisRequest, db: Session = Depends(get_db)):
+
+    doc = db.query(Document).filter(Document.python_doc_id == request.doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    if request.doc_id not in extraction_cache:
+        file_path = Path(settings.uploads_dir) / doc.filename
+        result = pdf_pipeline.extract(str(file_path), request.doc_id)
+        extraction_cache[request.doc_id] = {
+            "text_blocks": [{"text": b.text, "page": b.page} for b in result.text_blocks],
+            "tables": [{"page": t.page, "data": t.data} for t in result.tables]
+        }
+    
+    all_text = "\n".join(
+        b["text"] for b in extraction_cache[request.doc_id]["text_blocks"]
+    )
+    table_data = extraction_cache[request.doc_id].get("tables", [])
+    
+    analysis = await llm_client.analyze_quantitative(
+        text=all_text,
+        table_data=table_data
+    )
+    
+    return analysis

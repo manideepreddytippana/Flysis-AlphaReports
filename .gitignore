@@ -1,0 +1,31 @@
+# Environment Variables
+.env
+.env.local
+.venv/
+venv/
+env/
+
+# Node.js & Frontend Build
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+coverage/
+
+# Application Specific
+backend/uploads/
+docs/
+*.log
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

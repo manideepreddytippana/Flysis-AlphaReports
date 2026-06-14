@@ -1,0 +1,163 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 224 25% 7%;
+    --foreground: 210 40% 90%;
+    --card: 222 24% 10%;
+    --card-foreground: 210 40% 90%;
+    --popover: 222 24% 10%;
+    --popover-foreground: 210 40% 90%;
+    --primary: 168 100% 44%;
+    --primary-foreground: 224 25% 7%;
+    --secondary: 197 33% 35%;
+    --secondary-foreground: 210 40% 90%;
+    --muted: 222 20% 14%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 222 20% 14%;
+    --accent-foreground: 210 40% 90%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 222 20% 14%;
+    --input: 222 24% 13%;
+    --ring: 168 100% 44%;
+    --radius: 0.5rem;
+    --sidebar-background: 224 25% 7%;
+    --sidebar-foreground: 210 40% 90%;
+    --sidebar-primary: 168 100% 44%;
+    --sidebar-primary-foreground: 224 25% 7%;
+    --sidebar-accent: 222 20% 14%;
+    --sidebar-accent-foreground: 210 40% 90%;
+    --sidebar-border: 222 20% 14%;
+    --sidebar-ring: 168 100% 44%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Inter", system-ui, sans-serif;
+  }
+
+  .font-mono {
+    font-family: "JetBrains Mono", monospace;
+  }
+}
+
+@layer components {
+  .bloomberg-panel {
+    @apply bg-[#121828] border border-[#1b1f2a] rounded-lg;
+  }
+
+  .bloomberg-input {
+    @apply bg-[#161d2e] border border-[#1b1f2a] rounded text-[#d0e7f4] placeholder:text-[#64748b] focus:border-[#00e1b7] focus:ring-1 focus:ring-[#00e1b7]/20 transition-all;
+  }
+
+  .bloomberg-btn {
+    @apply bg-[#00e1b7] text-[#0b0f19] font-semibold px-6 py-2.5 rounded-lg hover:bg-[#00e1b7]/90 transition-all active:scale-[0.98];
+  }
+
+  .bloomberg-btn-outline {
+    @apply border border-[#1b1f2a] text-[#d0e7f4] px-4 py-2 rounded-lg hover:bg-[#121828] hover:border-[#3b6978] transition-all;
+  }
+
+  .bloomberg-divider {
+    @apply h-px bg-[#1b1f2a];
+  }
+
+  .bloomberg-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .bloomberg-scrollbar::-webkit-scrollbar-track {
+    background: #0b0f19;
+  }
+
+  .bloomberg-scrollbar::-webkit-scrollbar-thumb {
+    background: #1b1f2a;
+    border-radius: 3px;
+  }
+
+  .bloomberg-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #3b6978;
+  }
+
+  .glow-cyan {
+    box-shadow: 0 0 20px rgba(0, 225, 183, 0.15);
+  }
+
+  .text-gradient-cyan {
+    background: linear-gradient(135deg, #00e1b7, #3b6978);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .shimmer {
+    background: linear-gradient(90deg, #1b1f2a 25%, #121828 50%, #1b1f2a 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  .table-row-expand-enter {
+    animation: expandIn 0.35s cubic-bezier(0.25, 0.1, 0.25, 1);
+  }
+
+  @keyframes expandIn {
+    from {
+      opacity: 0;
+      transform: translateY(-10px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .metric-sparkline {
+    stroke: #00e1b7;
+    stroke-width: 2;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .status-running {
+    @apply bg-[#00e1b7] animate-pulse;
+  }
+  .status-ready {
+    @apply bg-[#00e1b7];
+  }
+  .status-error {
+    @apply bg-red-500;
+  }
+  .status-processing {
+    @apply bg-yellow-500 animate-pulse;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
