@@ -64,6 +64,8 @@ export const api = {
     },
     text: (docId: string, page?: number) =>
       fetchApi<any>(`/documents/${docId}/text${page ? `?page=${page}` : ""}`),
+    dataJson: (docId: string) =>
+      fetchApi<any>(`/documents/${docId}/data.json`),
     index: (docId: string, chunkSize = 512, overlap = 128) =>
       fetchApi<any>(`/documents/${docId}/index`, {
         method: "POST",

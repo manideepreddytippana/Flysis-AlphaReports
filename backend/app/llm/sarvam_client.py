@@ -389,7 +389,7 @@ class RAGPipeline:
         
         messages = [{
             "role": "user",
-            "content": f"""Based on the following excerpts from a document, please answer the question.
+            "content": f"""Based on the following experts from a document, please answer the question.
 
 Document excerpts:
 {context}
