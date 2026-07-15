@@ -1,19 +1,15 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { useAuth } from "@/hooks/useAuth";
 import {
   Search,
   Bell,
   Plus,
-  ChevronDown,
-  Microscope,
   User,
   FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function TopBar() {
-  const { user } = useAuth();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -21,7 +17,6 @@ export default function TopBar() {
     <header className="fixed top-0 left-20 right-0 z-30 h-16 bg-[#0b0f19]/95 backdrop-blur-sm border-b border-[#1b1f2a] flex items-center px-6">
       <div className="flex items-center gap-4 min-w-[200px]">
         <Link to="/" className="flex items-center gap-2 group">
-          <Microscope className="w-5 h-5 text-[#00e1b7]" />
           <span className="text-lg font-semibold text-[#d0e7f4] group-hover:text-[#00e1b7] transition-colors">
             Flysis
           </span>
@@ -69,15 +64,7 @@ export default function TopBar() {
         </button>
 
         <div className="w-8 h-8 rounded-full bg-[#121828] border border-[#1b1f2a] flex items-center justify-center">
-          {user?.avatar ? (
-            <img
-              src={user.avatar}
-              alt=""
-              className="w-full h-full rounded-full object-cover"
-            />
-          ) : (
-            <User className="w-4 h-4 text-[#64748b]" />
-          )}
+          <User className="w-4 h-4 text-[#64748b]" />
         </div>
       </div>
     </header>

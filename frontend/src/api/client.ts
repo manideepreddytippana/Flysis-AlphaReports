@@ -31,11 +31,6 @@ async function fetchApi<T>(
 }
 
 export const api = {
-  auth: {
-    me: () => fetchApi<any>("/auth/me"),
-    devLogin: () => fetchApi<any>("/auth/dev-login", { method: "POST" }),
-    logout: () => fetchApi<any>("/auth/logout", { method: "POST" }),
-  },
   documents: {
     list: (page = 1, limit = 20) =>
       fetchApi<any>(`/documents?page=${page}&limit=${limit}`),

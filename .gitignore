@@ -21,6 +21,7 @@ coverage/
 
 # Application Specific
 backend/uploads/
+backend/pdf-information/
 docs/
 *.log
 

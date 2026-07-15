@@ -1,24 +1,16 @@
-
 import logging
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime
 
-import jwt
-from fastapi import APIRouter, Depends, HTTPException, Response, Request, Cookie
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.core.database import get_db
 from app.db.models import User
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
+# Empty router to avoid import errors in main.py if still referenced
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-JWT_ALGORITHM = "HS256"
-COOKIE_NAME = "filysis_session"
-COOKIE_MAX_AGE = 365 * 24 * 60 * 60  # 1 year
 
 DEV_USER = {
     "union_id": "dev-local-user",
@@ -28,68 +20,8 @@ DEV_USER = {
 }
 
 
-def create_token(user_id: int, union_id: str) -> str:
-
-    payload = {
-        "user_id": user_id,
-        "union_id": union_id,
-        "exp": datetime.utcnow() + timedelta(days=365),
-        "iat": datetime.utcnow(),
-    }
-    return jwt.encode(payload, settings.app_secret, algorithm=JWT_ALGORITHM)
-
-
-def verify_token(token: str) -> Optional[dict]:
-
-    try:
-        payload = jwt.decode(token, settings.app_secret, algorithms=[JWT_ALGORITHM])
-        return payload
-    except jwt.ExpiredSignatureError:
-        logger.warning("Token expired")
-        return None
-    except jwt.InvalidTokenError as e:
-        logger.warning(f"Invalid token: {e}")
-        return None
-
-
-def get_current_user(
-    request: Request,
-    db: Session = Depends(get_db),
-) -> User:
-
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    
-    payload = verify_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    
-    user = db.query(User).filter(User.id == payload["user_id"]).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    
-    return user
-
-
-def get_optional_user(
-    request: Request,
-    db: Session = Depends(get_db),
-) -> Optional[User]:
-
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        return None
-    
-    payload = verify_token(token)
-    if not payload:
-        return None
-    
-    return db.query(User).filter(User.id == payload["user_id"]).first()
-
-
 def ensure_dev_user(db: Session) -> User:
-
+    """Ensure the single dev user exists in the database."""
     user = db.query(User).filter(User.union_id == DEV_USER["union_id"]).first()
     if not user:
         user = User(
@@ -104,51 +36,13 @@ def ensure_dev_user(db: Session) -> User:
         logger.info(f"Created dev user: {user.name} (id={user.id})")
     return user
 
+def get_current_user(db: Session = Depends(get_db)) -> User:
+    """Mock auth: always return the dev user."""
+    user = db.query(User).filter(User.union_id == DEV_USER["union_id"]).first()
+    if not user:
+        user = ensure_dev_user(db)
+    return user
 
-@router.post("/dev-login")
-def dev_login(response: Response, db: Session = Depends(get_db)):
-  
-
-
-    user = ensure_dev_user(db)
-    
-    user.last_sign_in_at = datetime.utcnow()
-    db.commit()
-    
-    token = create_token(user.id, user.union_id)
-    
-    response.set_cookie(
-        key=COOKIE_NAME,
-        value=token,
-        max_age=COOKIE_MAX_AGE,
-        httponly=True,
-        samesite="lax",
-        path="/",
-    )
-    
-    return {
-        "id": user.id,
-        "name": user.name,
-        "email": user.email,
-        "role": user.role,
-        "avatar": user.avatar,
-    }
-
-
-@router.get("/me")
-def get_me(user: User = Depends(get_current_user)):
-
-    return {
-        "id": user.id,
-        "name": user.name,
-        "email": user.email,
-        "role": user.role,
-        "avatar": user.avatar,
-    }
-
-
-@router.post("/logout")
-def logout(response: Response):
-    """Clear the session cookie."""
-    response.delete_cookie(key=COOKIE_NAME, path="/")
-    return {"success": True}
+def get_optional_user(db: Session = Depends(get_db)) -> User:
+    """Mock auth: always return the dev user."""
+    return get_current_user(db)

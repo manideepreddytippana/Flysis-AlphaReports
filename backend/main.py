@@ -8,7 +8,7 @@ from app.core.config import get_settings
 from app.core.database import engine, Base, SessionLocal
 from app.db.models import User, Document, DocumentChunk, ChatSession, ChatMessage, ExtractionTask
 from app.api.routes import router
-from app.api.auth import router as auth_router, ensure_dev_user
+from app.api.auth import ensure_dev_user
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,7 +39,7 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api/v1")
-app.include_router(auth_router, prefix="/api/v1")
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -60,7 +60,6 @@ async def startup_event():
     
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created/verified")
-    
     db = SessionLocal()
     try:
         dev_user = ensure_dev_user(db)

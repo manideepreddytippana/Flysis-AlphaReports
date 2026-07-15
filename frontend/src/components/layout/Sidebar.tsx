@@ -1,11 +1,9 @@
 import { Link, useLocation } from "react-router";
-import { useAuth } from "@/hooks/useAuth";
 import {
   LayoutDashboard,
   FolderOpen,
   BarChart3,
   Settings,
-  LogOut,
   Microscope,
 } from "lucide-react";
 
@@ -19,7 +17,6 @@ const bottomItems = [{ icon: Settings, label: "Settings", path: "#" }];
 
 export default function Sidebar() {
   const location = useLocation();
-  const { logout } = useAuth();
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -71,16 +68,6 @@ export default function Sidebar() {
             </span>
           </button>
         ))}
-        <button
-          onClick={logout}
-          className="w-12 h-12 rounded-lg flex items-center justify-center text-[#64748b] hover:bg-[#121828] hover:text-red-400 transition-all group relative"
-          title="Logout"
-        >
-          <LogOut className="w-5 h-5" />
-          <span className="absolute left-full ml-3 px-2 py-1 bg-[#121828] text-[#d0e7f4] text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-[#1b1f2a]">
-            Logout
-          </span>
-        </button>
       </div>
     </aside>
   );
