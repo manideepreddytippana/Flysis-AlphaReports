@@ -17,7 +17,7 @@ class Settings(BaseSettings):
   max_file_size_mb: int = int(os.getenv("MAX_FILE_SIZE_MB"))
   ocr_enabled: bool = str(os.getenv("OCR_ENABLED", "true")).lower() in ("true", "1", "t")
   host: str = os.getenv("HOST", "127.0.0.1")
-  port: int = int(os.getenv("PORT", "8001"))
+  port: int = int(os.getenv("PORT", "8000"))
   debug: bool = str(os.getenv("DEBUG", "true")).lower() in ("true", "1", "t")
   cors_origins: List[str] = json.loads(os.getenv("CORS_ORIGINS", '["http://localhost:3000", "http://localhost:5173"]'))
 
