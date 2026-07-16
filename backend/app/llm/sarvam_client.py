@@ -4,6 +4,7 @@ import logging
 import asyncio
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from dataclasses import dataclass
+from sarvamai import SarvamAI
 
 import httpx
 
@@ -67,14 +68,42 @@ Present findings in a structured format suitable for executive decision-making."
     def __init__(self):
         self.settings = get_settings()
         self.api_key = self.settings.sarvam_api_key
-        self.client = httpx.AsyncClient(
-            base_url=self.BASE_URL,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            timeout=httpx.Timeout(60.0, connect=10.0),
+        self.client = SarvamAI(
+            api_subscription_key=self.api_key,
+            timeout=60.0,
         )
+
+    @staticmethod
+    def _get_value(item: Any, key: str, default: Any = None) -> Any:
+        if isinstance(item, dict):
+            return item.get(key, default)
+        return getattr(item, key, default)
+
+    @classmethod
+    def _extract_completion(cls, response: Any) -> tuple[str, int, str]:
+        choices = cls._get_value(response, "choices", []) or []
+        if not choices:
+            return "", 0, "stop"
+
+        first_choice = choices[0]
+        message = cls._get_value(first_choice, "message", {})
+        usage = cls._get_value(response, "usage", {})
+
+        return (
+            cls._get_value(message, "content", "") or "",
+            cls._get_value(usage, "total_tokens", 0) or 0,
+            cls._get_value(first_choice, "finish_reason", "stop") or "stop",
+        )
+
+    @classmethod
+    def _extract_stream_content(cls, chunk: Any) -> str:
+        choices = cls._get_value(chunk, "choices", []) or []
+        if not choices:
+            return ""
+
+        first_choice = choices[0]
+        delta = cls._get_value(first_choice, "delta", {})
+        return cls._get_value(delta, "content", "") or ""
     
     async def chat(
         self,
@@ -103,22 +132,14 @@ Present findings in a structured format suitable for executive decision-making."
         all_messages = [system_msg] + messages
         
         try:
-            response = await self.client.post(
-                "/v1/chat/completions",
-                json={
-                    "model": model,
-                    "messages": all_messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                }
+            response = await asyncio.to_thread(
+                self.client.chat.completions,
+                messages=all_messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
             )
-            response.raise_for_status()
-            data = response.json()
-            
-            choice = data.get("choices", [{}])[0]
-            content = choice.get("message", {}).get("content", "")
-            tokens_used = data.get("usage", {}).get("total_tokens", 0)
-            finish_reason = choice.get("finish_reason", "stop")
+            content, tokens_used, finish_reason = self._extract_completion(response)
             
             return LLMResponse(
                 content=content,
@@ -127,9 +148,6 @@ Present findings in a structured format suitable for executive decision-making."
                 finish_reason=finish_reason
             )
         
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Sarvam API HTTP error: {e.response.status_code} - {e.response.text}")
-            raise
         except Exception as e:
             logger.error(f"Sarvam API error: {e}")
             raise
@@ -154,32 +172,39 @@ Present findings in a structured format suitable for executive decision-making."
         all_messages = [system_msg] + messages
         
         try:
-            async with self.client.stream(
-                "POST",
-                "/v1/chat/completions",
-                json={
-                    "model": model,
-                    "messages": all_messages,
-                    "temperature": temperature,
-                    "stream": True,
-                }
-            ) as response:
-                response.raise_for_status()
-                
-                async for line in response.aiter_lines():
-                    line = line.strip()
-                    if not line or line == "data: [DONE]":
-                        continue
-                    
-                    if line.startswith("data: "):
-                        try:
-                            chunk_data = json.loads(line[6:])
-                            delta = chunk_data.get("choices", [{}])[0].get("delta", {})
-                            content = delta.get("content", "")
-                            if content:
-                                yield content
-                        except (json.JSONDecodeError, KeyError):
-                            continue
+            stream = await asyncio.to_thread(
+                self.client.chat.completions,
+                messages=all_messages,
+                model=model,
+                temperature=temperature,
+                stream=True,
+            )
+
+            queue: asyncio.Queue[Any] = asyncio.Queue()
+            sentinel = object()
+            loop = asyncio.get_running_loop()
+
+            def _produce() -> None:
+                try:
+                    for chunk in stream:
+                        content = self._extract_stream_content(chunk)
+                        if content:
+                            loop.call_soon_threadsafe(queue.put_nowait, content)
+                except Exception as exc:
+                    logger.error(f"Sarvam streaming error: {exc}")
+                    loop.call_soon_threadsafe(queue.put_nowait, f"\n[Error: {str(exc)}]")
+                finally:
+                    loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+
+            producer_task = asyncio.create_task(asyncio.to_thread(_produce))
+
+            while True:
+                item = await queue.get()
+                if item is sentinel:
+                    break
+                yield item
+
+            await producer_task
         
         except Exception as e:
             logger.error(f"Sarvam streaming error: {e}")
