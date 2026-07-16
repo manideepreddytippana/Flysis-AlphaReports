@@ -8,16 +8,8 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.database import engine, Base, AsyncSessionLocal
-from app.db.models import (
-    User,
-    Document,
-    DocumentChunk,
-    ChatSession,
-    ChatMessage,
-    ExtractionTask,
-)
+
 from app.api.routes import router
-from app.api.auth import ensure_dev_user
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +26,6 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database and services on startup."""
 
     logger.info("=" * 60)
     logger.info("Filysis Python Backend Starting")
@@ -51,15 +42,9 @@ async def lifespan(app: FastAPI):
                 "Make sure pgvector is installed in your PostgreSQL instance"
             )
 
-    # Create database tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables created/verified")
-
-    # Ensure development user exists
-    async with AsyncSessionLocal() as db:
-        dev_user = await ensure_dev_user(db)
-        logger.info(f"Dev user ready: {dev_user.name} (id={dev_user.id})")
 
     logger.info("Database: PostgreSQL")
     logger.info(f"Uploads Dir: {settings.uploads_dir}")
@@ -70,10 +55,8 @@ async def lifespan(app: FastAPI):
     )
     logger.info("=" * 60)
 
-    # Application runs from here
     yield
 
-    # Shutdown
     logger.info("Filysis Python Backend shutting down")
 
 

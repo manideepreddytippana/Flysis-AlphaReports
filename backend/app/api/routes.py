@@ -18,8 +18,7 @@ from app.core.models import (
     ChatRequest, ChatResponse, SummaryRequest, SummaryResponse,
     AnalysisRequest, ChunkConfig, IndexResponse, ErrorResponse
 )
-from app.db.models import Document, DocumentChunk, User
-from app.api.auth import get_current_user
+from app.db.models import Document, DocumentChunk
 from app.pdf.extractor import PDFExtractionPipeline
 from app.vector.pgvector_store import PgVectorStore
 from app.llm.sarvam_client import SarvamAIClient, RAGPipeline
@@ -180,14 +179,13 @@ async def list_documents(
     page: int = 1,
     limit: int = 20,
     status: Optional[str] = None,
-    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Document).where(Document.user_id == user.id)
+    query = select(Document)
     if status:
         query = query.where(Document.status == status)
 
-    count_query = select(Document.id).where(Document.user_id == user.id)
+    count_query = select(Document.id)
     if status:
         count_query = count_query.where(Document.status == status)
 
@@ -225,16 +223,10 @@ async def list_documents(
 @router.get("/documents/{doc_id}")
 async def get_document(
     doc_id: int,
-    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get document metadata."""
-    result = await db.execute(
-        select(Document).where(
-            Document.id == doc_id,
-            Document.user_id == user.id,
-        )
-    )
+    result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -275,10 +267,9 @@ async def download_document(
 
 @router.get("/documents/stats/overview")
 async def get_document_stats(
-    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    docs = (await db.execute(select(Document).where(Document.user_id == user.id))).scalars().all()
+    docs = (await db.execute(select(Document))).scalars().all()
     return {
         "total": len(docs),
         "ready": sum(1 for d in docs if d.status == "ready"),
@@ -292,7 +283,6 @@ async def get_document_stats(
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not file.filename or not file.filename.lower().endswith('.pdf'):
@@ -322,7 +312,6 @@ async def upload_document(
         page_count = 0
     
     db_doc = Document(
-        user_id=user.id,
         filename=doc_uuid + ".pdf",
         original_name=file.filename,
         file_size=len(contents),
@@ -350,16 +339,10 @@ async def upload_document(
 @router.delete("/documents/{doc_id}")
 async def delete_document(
     doc_id: int,
-    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
 
-    result = await db.execute(
-        select(Document).where(
-            Document.id == doc_id,
-            Document.user_id == user.id,
-        )
-    )
+    result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
