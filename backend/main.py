@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.core.config import get_settings
-from app.core.database import engine, Base, SessionLocal
+from app.core.database import engine, Base, AsyncSessionLocal
 from app.db.models import (
     User,
     Document,
@@ -41,10 +41,9 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
 
     # Enable pgvector extension
-    with engine.connect() as conn:
+    async with engine.begin() as conn:
         try:
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            conn.commit()
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             logger.info("pgvector extension ready")
         except Exception as e:
             logger.warning(f"Could not create pgvector extension: {e}")
@@ -53,16 +52,14 @@ async def lifespan(app: FastAPI):
             )
 
     # Create database tables
-    Base.metadata.create_all(bind=engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables created/verified")
 
     # Ensure development user exists
-    db = SessionLocal()
-    try:
-        dev_user = ensure_dev_user(db)
+    async with AsyncSessionLocal() as db:
+        dev_user = await ensure_dev_user(db)
         logger.info(f"Dev user ready: {dev_user.name} (id={dev_user.id})")
-    finally:
-        db.close()
 
     logger.info("Database: PostgreSQL")
     logger.info(f"Uploads Dir: {settings.uploads_dir}")

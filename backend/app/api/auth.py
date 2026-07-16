@@ -2,7 +2,8 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.db.models import User
@@ -20,9 +21,10 @@ DEV_USER = {
 }
 
 
-def ensure_dev_user(db: Session) -> User:
+async def ensure_dev_user(db: AsyncSession) -> User:
     """Ensure the single dev user exists in the database."""
-    user = db.query(User).filter(User.union_id == DEV_USER["union_id"]).first()
+    result = await db.execute(select(User).where(User.union_id == DEV_USER["union_id"]))
+    user = result.scalar_one_or_none()
     if not user:
         user = User(
             union_id=DEV_USER["union_id"],
@@ -31,18 +33,19 @@ def ensure_dev_user(db: Session) -> User:
             role=DEV_USER["role"],
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         logger.info(f"Created dev user: {user.name} (id={user.id})")
     return user
 
-def get_current_user(db: Session = Depends(get_db)) -> User:
+async def get_current_user(db: AsyncSession = Depends(get_db)) -> User:
     """Mock auth: always return the dev user."""
-    user = db.query(User).filter(User.union_id == DEV_USER["union_id"]).first()
+    result = await db.execute(select(User).where(User.union_id == DEV_USER["union_id"]))
+    user = result.scalar_one_or_none()
     if not user:
-        user = ensure_dev_user(db)
+        user = await ensure_dev_user(db)
     return user
 
-def get_optional_user(db: Session = Depends(get_db)) -> User:
+async def get_optional_user(db: AsyncSession = Depends(get_db)) -> User:
     """Mock auth: always return the dev user."""
-    return get_current_user(db)
+    return await get_current_user(db)

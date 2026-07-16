@@ -8,10 +8,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import JSONResponse, FileResponse
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.database import get_db, SessionLocal
+from app.core.database import get_db, AsyncSessionLocal
 from app.core.models import (
     UploadResponse, DocumentStatus, ExtractionResult as ExtractionResultModel,
     ChatRequest, ChatResponse, SummaryRequest, SummaryResponse,
@@ -35,16 +36,30 @@ rag_pipeline = RAGPipeline(vector_store, llm_client)
 extraction_cache: dict = {}
 
 
+async def _get_document_by_id(db: AsyncSession, doc_id: int) -> Document | None:
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    return result.scalar_one_or_none()
+
+
+async def _get_document_by_python_doc_id(
+    db: AsyncSession,
+    python_doc_id: str,
+) -> Document | None:
+    result = await db.execute(
+        select(Document).where(Document.python_doc_id == python_doc_id)
+    )
+    return result.scalar_one_or_none()
+
+
 async def process_document_bg(doc_id: int, python_doc_id: str, file_path: str):
 
-    db = SessionLocal()
-    try:
-        doc = db.query(Document).filter(Document.id == doc_id).first()
+    async with AsyncSessionLocal() as db:
+        doc = await _get_document_by_id(db, doc_id)
         if not doc:
             return
             
         doc.status = "processing"
-        db.commit()
+        await db.commit()
         
         try:
             logger.info(f"Starting extraction for {python_doc_id}")
@@ -109,7 +124,7 @@ async def process_document_bg(doc_id: int, python_doc_id: str, file_path: str):
                 for b in extraction_cache[python_doc_id]["text_blocks"]
             ]
             
-            vector_store.index_document(
+            await vector_store.index_document(
                 db=db,
                 doc_id=doc.id,
                 chunks=chunks,
@@ -131,16 +146,14 @@ async def process_document_bg(doc_id: int, python_doc_id: str, file_path: str):
             
             # 4. Update Status
             doc.status = "ready"
-            db.commit()
+            await db.commit()
             logger.info(f"Background processing completed for doc {python_doc_id}")
             
         except Exception as e:
             doc.status = "error"
             doc.error_message = str(e)
-            db.commit()
+            await db.commit()
             logger.error(f"Background processing failed for doc {python_doc_id}: {e}")
-    finally:
-        db.close()
 
 
 def get_upload_path() -> Path:
@@ -168,14 +181,24 @@ async def list_documents(
     limit: int = 20,
     status: Optional[str] = None,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    query = db.query(Document).filter(Document.user_id == user.id)
+    query = select(Document).where(Document.user_id == user.id)
     if status:
-        query = query.filter(Document.status == status)
-    
-    total = query.count()
-    items = query.order_by(Document.uploaded_at.desc()).offset((page - 1) * limit).limit(limit).all()
+        query = query.where(Document.status == status)
+
+    count_query = select(Document.id).where(Document.user_id == user.id)
+    if status:
+        count_query = count_query.where(Document.status == status)
+
+    total = len((await db.execute(count_query)).scalars().all())
+    items = (
+        await db.execute(
+            query.order_by(Document.uploaded_at.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+        )
+    ).scalars().all()
     
     return {
         "items": [
@@ -203,13 +226,16 @@ async def list_documents(
 async def get_document(
     doc_id: int,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get document metadata."""
-    doc = db.query(Document).filter(
-        Document.id == doc_id,
-        Document.user_id == user.id
-    ).first()
+    result = await db.execute(
+        select(Document).where(
+            Document.id == doc_id,
+            Document.user_id == user.id,
+        )
+    )
+    doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -229,9 +255,9 @@ async def get_document(
 @router.get("/documents/{python_doc_id}/download")
 async def download_document(
     python_doc_id: str,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    doc = await _get_document_by_python_doc_id(db, python_doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
         
@@ -250,9 +276,9 @@ async def download_document(
 @router.get("/documents/stats/overview")
 async def get_document_stats(
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    docs = db.query(Document).filter(Document.user_id == user.id).all()
+    docs = (await db.execute(select(Document).where(Document.user_id == user.id))).scalars().all()
     return {
         "total": len(docs),
         "ready": sum(1 for d in docs if d.status == "ready"),
@@ -267,7 +293,7 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     if not file.filename or not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
@@ -306,8 +332,8 @@ async def upload_document(
         status="processing",
     )
     db.add(db_doc)
-    db.commit()
-    db.refresh(db_doc)
+    await db.commit()
+    await db.refresh(db_doc)
     
     background_tasks.add_task(process_document_bg, db_doc.id, doc_uuid, str(file_path))
     
@@ -325,13 +351,16 @@ async def upload_document(
 async def delete_document(
     doc_id: int,
     user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
 
-    doc = db.query(Document).filter(
-        Document.id == doc_id,
-        Document.user_id == user.id
-    ).first()
+    result = await db.execute(
+        select(Document).where(
+            Document.id == doc_id,
+            Document.user_id == user.id,
+        )
+    )
+    doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -342,13 +371,13 @@ async def delete_document(
     except Exception as e:
         logger.warning(f"Failed to delete file: {e}")
     
-    vector_store.delete_document_chunks(db, doc.id)
+    await vector_store.delete_document_chunks(db, doc.id)
     
     if doc.python_doc_id:
         extraction_cache.pop(doc.python_doc_id, None)
     
-    db.delete(doc)
-    db.commit()
+    await db.delete(doc)
+    await db.commit()
     
     return {"message": "Document deleted successfully"}
 
@@ -356,9 +385,9 @@ async def delete_document(
 
 
 @router.post("/documents/{python_doc_id}/extract/full")
-async def extract_full(python_doc_id: str, db: Session = Depends(get_db)):
+async def extract_full(python_doc_id: str, db: AsyncSession = Depends(get_db)):
 
-    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    doc = await _get_document_by_python_doc_id(db, python_doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -367,7 +396,7 @@ async def extract_full(python_doc_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="PDF file not found on disk")
     
     doc.status = "processing"
-    db.commit()
+    await db.commit()
     
     try:
         result = pdf_pipeline.extract(str(file_path), python_doc_id)
@@ -418,22 +447,22 @@ async def extract_full(python_doc_id: str, db: Session = Depends(get_db)):
         
         extraction_cache[python_doc_id] = extraction_result
         doc.status = "ready"
-        db.commit()
+        await db.commit()
         
         return extraction_result
     
     except Exception as e:
         doc.status = "error"
         doc.error_message = str(e)
-        db.commit()
+        await db.commit()
         logger.error(f"Extraction failed for {python_doc_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
 
 @router.post("/documents/{python_doc_id}/extract/tables")
-async def extract_tables(python_doc_id: str, db: Session = Depends(get_db)):
+async def extract_tables(python_doc_id: str, db: AsyncSession = Depends(get_db)):
 
-    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    doc = await _get_document_by_python_doc_id(db, python_doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -460,9 +489,9 @@ async def extract_tables(python_doc_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/documents/{python_doc_id}/text")
-async def get_text(python_doc_id: str, page: Optional[int] = None, db: Session = Depends(get_db)):
+async def get_text(python_doc_id: str, page: Optional[int] = None, db: AsyncSession = Depends(get_db)):
 
-    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    doc = await _get_document_by_python_doc_id(db, python_doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -535,9 +564,9 @@ async def get_text(python_doc_id: str, page: Optional[int] = None, db: Session =
 
 
 @router.get("/documents/{python_doc_id}/data.json")
-async def get_document_data_json(python_doc_id: str, db: Session = Depends(get_db)):
+async def get_document_data_json(python_doc_id: str, db: AsyncSession = Depends(get_db)):
     """Return the exact raw extracted data JSON (chunks, tables, outline, etc)"""
-    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    doc = await _get_document_by_python_doc_id(db, python_doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
         
@@ -558,9 +587,9 @@ async def get_document_data_json(python_doc_id: str, db: Session = Depends(get_d
 
 
 @router.post("/documents/{python_doc_id}/index")
-async def index_document(python_doc_id: str, config: ChunkConfig, db: Session = Depends(get_db)):
+async def index_document(python_doc_id: str, config: ChunkConfig, db: AsyncSession = Depends(get_db)):
     """Index document chunks into PostgreSQL+pgvector for semantic search."""
-    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    doc = await _get_document_by_python_doc_id(db, python_doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -615,7 +644,7 @@ async def index_document(python_doc_id: str, config: ChunkConfig, db: Session = 
         for b in extraction_cache[python_doc_id]["text_blocks"]
     ]
     
-    result = vector_store.index_document(
+    result = await vector_store.index_document(
         db=db,
         doc_id=doc.id,
         chunks=chunks,
@@ -627,9 +656,9 @@ async def index_document(python_doc_id: str, config: ChunkConfig, db: Session = 
 
 
 @router.post("/documents/{python_doc_id}/search")
-async def search_document(python_doc_id: str, query: dict, db: Session = Depends(get_db)):
+async def search_document(python_doc_id: str, query: dict, db: AsyncSession = Depends(get_db)):
 
-    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    doc = await _get_document_by_python_doc_id(db, python_doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -639,7 +668,7 @@ async def search_document(python_doc_id: str, query: dict, db: Session = Depends
     if not search_query:
         raise HTTPException(status_code=400, detail="Query is required")
     
-    results = vector_store.search(db, doc.id, search_query, top_k=top_k)
+    results = await vector_store.search(db, doc.id, search_query, top_k=top_k)
     
     return {
         "results": results,
@@ -651,12 +680,12 @@ async def search_document(python_doc_id: str, query: dict, db: Session = Depends
 
 
 @router.post("/llm/chat")
-async def llm_chat(request: ChatRequest, db: Session = Depends(get_db)):
+async def llm_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
 
     import httpx
     try:
         if request.use_rag:
-            doc = db.query(Document).filter(Document.python_doc_id == request.doc_id).first()
+            doc = await _get_document_by_python_doc_id(db, request.doc_id)
             if not doc:
                 raise HTTPException(status_code=404, detail="Document not found")
             
@@ -698,9 +727,9 @@ async def llm_chat(request: ChatRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/documents/{python_doc_id}/extract/summary")
-async def extract_summary(python_doc_id: str, request: SummaryRequest, db: Session = Depends(get_db)):
+async def extract_summary(python_doc_id: str, request: SummaryRequest, db: AsyncSession = Depends(get_db)):
 
-    doc = db.query(Document).filter(Document.python_doc_id == python_doc_id).first()
+    doc = await _get_document_by_python_doc_id(db, python_doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -761,15 +790,15 @@ async def extract_summary(python_doc_id: str, request: SummaryRequest, db: Sessi
    
     import json as _json
     doc.extracted_summary = _json.dumps(summary_result, ensure_ascii=False)
-    db.commit()
+    await db.commit()
     
     return summary_result
 
 
 @router.post("/llm/analyze")
-async def llm_analyze(request: AnalysisRequest, db: Session = Depends(get_db)):
+async def llm_analyze(request: AnalysisRequest, db: AsyncSession = Depends(get_db)):
 
-    doc = db.query(Document).filter(Document.python_doc_id == request.doc_id).first()
+    doc = await _get_document_by_python_doc_id(db, request.doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     

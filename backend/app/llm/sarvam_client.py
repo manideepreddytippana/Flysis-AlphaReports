@@ -6,7 +6,6 @@ from typing import List, Dict, Any, Optional, AsyncGenerator
 from dataclasses import dataclass
 from sarvamai import SarvamAI
 
-import httpx
 
 from app.core.config import get_settings
 
@@ -393,7 +392,7 @@ class RAGPipeline:
         """
         start_time = asyncio.get_event_loop().time()
         
-        chunks = self.vector_store.search(db, doc_id, question, top_k=top_k)
+        chunks = await self.vector_store.search(db, doc_id, question, top_k=top_k)
         
         if not chunks:
             return {

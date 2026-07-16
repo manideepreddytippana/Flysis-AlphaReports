@@ -3,8 +3,8 @@ from typing import List, Dict, Any, Optional
 from functools import lru_cache
 
 import numpy as np
-from sqlalchemy.orm import Session
-from sqlalchemy import text, select, delete
+from sqlalchemy import text, select, delete, func
+from sqlalchemy.ext.asyncio import AsyncSession
 from sentence_transformers import SentenceTransformer
 
 from app.core.config import get_settings
@@ -34,9 +34,9 @@ class PgVectorStore:
             self._embedding_model = get_embedding_model()
         return self._embedding_model
     
-    def index_document(
+    async def index_document(
         self,
-        db: Session,
+        db: AsyncSession,
         doc_id: int,
         chunks: List[Dict[str, Any]],
         chunk_size: int = 512,
@@ -52,13 +52,13 @@ class PgVectorStore:
             chunk_size: Target chunk size in characters
             overlap: Overlap between chunks in characters
         """
-        db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id).delete()
-        db.flush()
+        await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc_id))
+        await db.flush()
         
         prepared_chunks = self._prepare_chunks(chunks, chunk_size, overlap)
         
         if not prepared_chunks:
-            db.commit()
+            await db.commit()
             return {"indexed_chunks": 0, "document_id": doc_id}
         
         batch_size = 32
@@ -82,7 +82,7 @@ class PgVectorStore:
             )
             db.add(db_chunk)
         
-        db.commit()
+        await db.commit()
         
         logger.info(f"Indexed {len(prepared_chunks)} chunks for document {doc_id}")
         
@@ -92,9 +92,9 @@ class PgVectorStore:
             "message": f"Successfully indexed {len(prepared_chunks)} chunks"
         }
     
-    def search(
+    async def search(
         self,
-        db: Session,
+        db: AsyncSession,
         doc_id: int,
         query: str,
         top_k: int = 5,
@@ -104,7 +104,7 @@ class PgVectorStore:
         """
         query_embedding = self.embedding_model.encode([query])[0].tolist()
         
-        results = db.execute(
+        results = await db.execute(
             text("""
                 SELECT id, content, page_number, chunk_type, section_title,
                        1 - (embedding <=> CAST(:query_embedding AS vector)) AS score
@@ -119,10 +119,12 @@ class PgVectorStore:
                 "doc_id": doc_id,
                 "top_k": top_k,
             }
-        ).fetchall()
+        )
+
+        rows = results.fetchall()
         
         formatted_results = []
-        for row in results:
+        for row in rows:
             formatted_results.append({
                 "chunk": row.content,
                 "score": float(row.score) if row.score else 0.0,
@@ -136,15 +138,15 @@ class PgVectorStore:
         
         return formatted_results
     
-    def delete_document_chunks(self, db: Session, doc_id: int) -> bool:
+    async def delete_document_chunks(self, db: AsyncSession, doc_id: int) -> bool:
         """Delete all chunks for a document."""
         try:
-            db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id).delete()
-            db.commit()
+            await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc_id))
+            await db.commit()
             return True
         except Exception as e:
             logger.error(f"Failed to delete chunks for doc {doc_id}: {e}")
-            db.rollback()
+            await db.rollback()
             return False
     
     def _prepare_chunks(
@@ -209,11 +211,14 @@ class PgVectorStore:
         end = chunk_text[-window_size:]
         return f"{start}...{end}"
     
-    def get_stats(self, db: Session, doc_id: int) -> Dict[str, Any]:
+    async def get_stats(self, db: AsyncSession, doc_id: int) -> Dict[str, Any]:
         """Get chunk statistics for a document."""
-        count = db.query(DocumentChunk).filter(
-            DocumentChunk.document_id == doc_id
-        ).count()
+        result = await db.execute(
+            select(func.count()).select_from(DocumentChunk).where(
+                DocumentChunk.document_id == doc_id
+            )
+        )
+        count = result.scalar_one()
         
         return {
             "exists": count > 0,
