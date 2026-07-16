@@ -16,11 +16,11 @@ try:
         if not text:
             return 0
         return len(_ENC.encode(text))
-except Exception:  # pragma: no cover - tiktoken not installed
+except Exception:  
     def count_tokens(text: str) -> int:
         if not text:
             return 0
-        # ~1.3 tokens per whitespace-separated word for English business text
+        # not exact token count it is just a estimation
         return max(1, int(len(text.split()) * 1.3))
 
 
@@ -528,7 +528,6 @@ class PDFReportAnalyzer:
         elif size_ratio < 0.95:
             score -= 1.0  
 
-        # --- bold ---
         if li.is_bold and size_ratio >= 0.98:
             score += 1.3
 
@@ -639,7 +638,7 @@ class PDFReportAnalyzer:
         result = parts[0]
         for p in parts[1:]:
             if HYPHEN_WRAP_RE.search(result) and p[:1].islower():
-                result = result[:-1] + p  # edge case 12: de-hyphenate wrap
+                result = result[:-1] + p  
             else:
                 result = result + " " + p
         return result

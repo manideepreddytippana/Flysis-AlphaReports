@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 from dataclasses import dataclass, field
 
-import fitz  # PyMuPDF
+import fitz 
 import pdfplumber
 import pandas as pd
 from PIL import Image
@@ -107,7 +107,6 @@ class PDFExtractionPipeline:
             )
         except Exception as e:
             logger.error(f"[{doc_id}] PDFReportAnalyzer failed: {e}", exc_info=True)
-            # Fall back to basic PyMuPDF extraction
             logger.info(f"[{doc_id}] Falling back to basic PyMuPDF extraction")
             try:
                 basic_result = self._extract_pymupdf_basic(file_path, doc_id)
@@ -118,7 +117,6 @@ class PDFExtractionPipeline:
             except Exception as e2:
                 logger.error(f"[{doc_id}] Basic PyMuPDF also failed: {e2}")
 
-        #Supplementary table detection (if analyzer found none) ─
         if len(result.tables) == 0:
             logger.info(f"[{doc_id}] Stage 2: pdfplumber supplementary table extraction")
             try:
@@ -130,7 +128,6 @@ class PDFExtractionPipeline:
             except Exception as e:
                 logger.error(f"[{doc_id}] pdfplumber failed: {e}")
 
-        #camelot fallback for tables ────────────────────────
         if len(result.tables) == 0:
             logger.info(f"[{doc_id}] Stage 3: camelot table extraction")
             try:
@@ -142,7 +139,6 @@ class PDFExtractionPipeline:
             except Exception as e:
                 logger.error(f"[{doc_id}] camelot failed: {e}")
 
-        #OCR fallback for scanned documents ─────────────────
         if len(result.text_blocks) == 0 and self.enable_ocr:
             logger.info(f"[{doc_id}] Stage 4: PyMuPDF OCR fallback")
             try:
@@ -200,7 +196,7 @@ class PDFExtractionPipeline:
 
             result.text_blocks.append(TextBlock(
                 text=chunk.text,
-                page=chunk.page_start + 1,  # 1-indexed for API compatibility
+                page=chunk.page_start + 1,
                 bbox=None,
                 font_size=None,
                 block_type=block_type,
@@ -233,7 +229,7 @@ class PDFExtractionPipeline:
 
                     if table_data:
                         result.tables.append(ExtractedTable(
-                            page=page_num + 1,  # 1-indexed
+                            page=page_num + 1,
                             rows=len(table_data),
                             cols=max(len(row) for row in table_data) if table_data else 0,
                             data=table_data,
@@ -452,7 +448,6 @@ class PDFExtractionPipeline:
         """Extract only tables from PDF (optimized for table-heavy documents)."""
         tables = []
 
-        # First try the analyzer's native table detection
         try:
             analyzer = PDFReportAnalyzer(file_path).run()
             for page_num, table_list in analyzer.table_texts.items():

@@ -3,10 +3,9 @@ from functools import lru_cache
 from typing import List
 import json
 import os
-# import dotenv
 from dotenv import load_dotenv
 
-load_dotenv()  # Load environment variables from .env file
+load_dotenv()  
 
 class Settings(BaseSettings):
 
@@ -16,8 +15,8 @@ class Settings(BaseSettings):
   uploads_dir: str = os.getenv("UPLOADS_DIR", "./uploads")
   max_file_size_mb: int = int(os.getenv("MAX_FILE_SIZE_MB"))
   ocr_enabled: bool = str(os.getenv("OCR_ENABLED", "true")).lower() in ("true", "1", "t")
-  host: str = os.getenv("HOST", "127.0.0.1")
-  port: int = int(os.getenv("PORT", "8000"))
+  host: str = os.getenv("HOST")
+  port: int = int(os.getenv("PORT"))
   debug: bool = str(os.getenv("DEBUG", "true")).lower() in ("true", "1", "t")
   cors_origins: List[str] = json.loads(os.getenv("CORS_ORIGINS", '["http://localhost:3000", "http://localhost:5173"]'))
 

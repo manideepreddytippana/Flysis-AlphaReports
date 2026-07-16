@@ -31,7 +31,6 @@ async def lifespan(app: FastAPI):
     logger.info("Filysis Python Backend Starting")
     logger.info("=" * 60)
 
-    # Enable pgvector extension
     async with engine.begin() as conn:
         try:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))

@@ -7,18 +7,18 @@ from typing import List
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Depends
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db, AsyncSessionLocal
 from app.core.models import (
-    UploadResponse, DocumentStatus, ExtractionResult as ExtractionResultModel,
-    ChatRequest, ChatResponse, SummaryRequest, SummaryResponse,
-    AnalysisRequest, ChunkConfig, IndexResponse, ErrorResponse
+    UploadResponse, DocumentStatus,
+    ChatRequest, ChatResponse, SummaryRequest,
+    AnalysisRequest, ChunkConfig, IndexResponse
 )
-from app.db.models import Document, DocumentChunk
+from app.db.models import Document
 from app.pdf.extractor import PDFExtractionPipeline
 from app.vector.pgvector_store import PgVectorStore
 from app.llm.sarvam_client import SarvamAIClient, RAGPipeline
@@ -143,7 +143,6 @@ async def process_document_bg(doc_id: int, python_doc_id: str, file_path: str):
                 except Exception as sum_e:
                     logger.warning(f"Summary generation failed: {sum_e}")
             
-            # 4. Update Status
             doc.status = "ready"
             await db.commit()
             logger.info(f"Background processing completed for doc {python_doc_id}")
@@ -478,7 +477,6 @@ async def get_text(python_doc_id: str, page: int | None = None, db: AsyncSession
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    # Extract if not cached
     if python_doc_id not in extraction_cache:
         file_path = Path(settings.uploads_dir) / doc.filename
         result = pdf_pipeline.extract(str(file_path), python_doc_id)
@@ -688,7 +686,6 @@ async def llm_chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
                     latency_ms=result["latency_ms"]
                 )
         
-        # Calling LLM directly without RAG
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
         
         start_time = time.time()

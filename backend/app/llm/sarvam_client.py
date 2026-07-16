@@ -250,9 +250,7 @@ Please provide your response in this JSON format:
                 max_tokens=4096
             )
             
-            # Try to parse JSON from response
             content = response.content
-            # Extract JSON if wrapped in code blocks
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0]
             elif "```" in content:
@@ -268,7 +266,6 @@ Please provide your response in this JSON format:
                     "tokens_used": response.tokens_used
                 }
             except json.JSONDecodeError:
-                # Return raw content if JSON parsing fails
                 return {
                     "summary": response.content,
                     "sections": [],
