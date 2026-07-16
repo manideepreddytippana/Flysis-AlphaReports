@@ -106,6 +106,13 @@ class ChatResponse(BaseModel):
     latency_ms: int = 0
 
 
+class LLMResponse(BaseModel):
+    content: str
+    tokens_used: int = 0
+    model: str = "sarvam-105b"
+    finish_reason: str = "stop"
+
+
 class SummaryRequest(BaseModel):
     doc_id: str
     style: Literal["brief", "detailed", "executive"] = "detailed"

@@ -3,21 +3,13 @@ import json
 import logging
 import asyncio
 from typing import List, Dict, Any, Optional, AsyncGenerator
-from dataclasses import dataclass
 from sarvamai import SarvamAI
 
 
 from app.core.config import get_settings
+from app.core.models import LLMResponse
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class LLMResponse:
-    content: str
-    tokens_used: int = 0
-    model: str = "sarvam-105b"
-    finish_reason: str = "stop"
 
 
 class SarvamAIClient:
