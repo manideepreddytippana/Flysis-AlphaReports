@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import asyncio
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, AsyncGenerator
 from sarvamai import SarvamAI
 
 
@@ -203,7 +203,7 @@ Present findings in a structured format suitable for executive decision-making."
         self,
         text: str,
         style: str = "detailed",
-        focus_area: Optional[str] = None
+        focus_area: str | None = None
     ) -> Dict[str, Any]:
         """
         Generate a structured summary of document content.
@@ -290,7 +290,7 @@ Please provide your response in this JSON format:
     async def analyze_quantitative(
         self,
         text: str,
-        table_data: Optional[List[Dict]] = None
+        table_data: List[Dict] | None = None
     ) -> Dict[str, Any]:
         """
         Perform quantitative analysis on extracted data.

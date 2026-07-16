@@ -3,7 +3,7 @@ import time
 import logging
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 from dataclasses import dataclass, field
 
 import fitz  # PyMuPDF
@@ -24,18 +24,18 @@ class ExtractedTable:
     data: List[List[str]]
     confidence: float = 1.0
     extraction_method: str = "unknown"
-    bbox: Optional[List[float]] = None
+    bbox: List[float] | None = None
 
 
 @dataclass
 class TextBlock:
     text: str
     page: int
-    bbox: Optional[List[float]] = None
-    font_size: Optional[float] = None
+    bbox: List[float] | None = None
+    font_size: float | None = None
     block_type: str = "text"
     confidence: float = 1.0
-    heading_path: Optional[List[str]] = None
+    heading_path: List[str] | None = None
     section: str = ""
 
 

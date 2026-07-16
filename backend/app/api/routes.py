@@ -3,7 +3,7 @@ import os
 import uuid
 import logging
 import time
-from typing import List, Optional
+from typing import List
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Depends
@@ -178,7 +178,7 @@ async def health_check():
 async def list_documents(
     page: int = 1,
     limit: int = 20,
-    status: Optional[str] = None,
+    status: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     query = select(Document)
@@ -472,7 +472,7 @@ async def extract_tables(python_doc_id: str, db: AsyncSession = Depends(get_db))
 
 
 @router.get("/documents/{python_doc_id}/text")
-async def get_text(python_doc_id: str, page: Optional[int] = None, db: AsyncSession = Depends(get_db)):
+async def get_text(python_doc_id: str, page: int | None = None, db: AsyncSession = Depends(get_db)):
 
     doc = await _get_document_by_python_doc_id(db, python_doc_id)
     if not doc:

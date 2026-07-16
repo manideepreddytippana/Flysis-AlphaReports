@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Literal
+from typing import List, Dict, Any, Literal
 from datetime import datetime
 from enum import Enum
 
@@ -40,16 +40,16 @@ class DocumentMetadata(BaseModel):
     page_count: int
     file_size: int
     status: DocumentStatus
-    extracted_text_length: Optional[int] = None
-    table_count: Optional[int] = None
+    extracted_text_length: int | None = None
+    table_count: int | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class TextBlock(BaseModel):
     text: str
     page: int
-    bbox: Optional[List[float]] = None
-    font_size: Optional[float] = None
+    bbox: List[float] | None = None
+    font_size: float | None = None
     block_type: str = "text"
 
 
@@ -57,7 +57,7 @@ class TableCell(BaseModel):
     row: int
     col: int
     text: str
-    bbox: Optional[List[float]] = None
+    bbox: List[float] | None = None
 
 
 class ExtractedTable(BaseModel):
@@ -82,8 +82,8 @@ class ExtractionResult(BaseModel):
 class SearchResult(BaseModel):
     chunk: str
     score: float
-    page: Optional[int] = None
-    context: Optional[str] = None
+    page: int | None = None
+    context: str | None = None
     metadata: Dict[str, Any] = {}
 
 
@@ -116,7 +116,7 @@ class LLMResponse(BaseModel):
 class SummaryRequest(BaseModel):
     doc_id: str
     style: Literal["brief", "detailed", "executive"] = "detailed"
-    focus_area: Optional[str] = None
+    focus_area: str | None = None
 
 
 class SummaryResponse(BaseModel):
@@ -144,5 +144,5 @@ class IndexResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: str
-    detail: Optional[str] = None
+    detail: str | None = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)

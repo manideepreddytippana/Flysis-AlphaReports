@@ -3,7 +3,7 @@ import json
 import math
 import statistics
 from dataclasses import dataclass, field
-from typing import List, Dict, Tuple, Optional, Any
+from typing import List, Dict, Tuple, Any
 from collections import Counter, defaultdict
 
 import fitz  
@@ -133,9 +133,9 @@ class Heading:
     page: int
     bbox: Tuple[float, float, float, float]
     score: float
-    numbering: Optional[str]
+    numbering: str | None
     line_indices: List[int]
-    style_key: Optional[Tuple] = None
+    style_key: Tuple | None = None
 
 
 @dataclass
@@ -145,8 +145,8 @@ class ContentUnit:
     page_start: int
     page_end: int
     line_indices: List[int]
-    heading_ref: Optional[Heading] = None
-    topic_break: Optional[str] = None       # None | "hard" | "soft"
+    heading_ref: Heading | None = None
+    topic_break: str | None = None       # None | "hard" | "soft"
     topic_break_score: float = 0.0
 
 
@@ -398,7 +398,7 @@ class PDFReportAnalyzer:
                     break
 
     @staticmethod
-    def _table_to_markdown(data) -> Optional[str]:
+    def _table_to_markdown(data) -> str | None:
         if not data:
             return None
         rows = [
@@ -458,7 +458,7 @@ class PDFReportAnalyzer:
         for pno in range(len(self.doc)):
             page_lines = [li for li in self.lines if li.page == pno]
             ordered = self._ordered_lines_for_page(page_lines)
-            prev: Optional[LineInfo] = None
+            prev: LineInfo | None = None
             for li in ordered:
                 if prev is not None and li.bbox[1] >= prev.bbox[1]:
                     gap = max(0.0, li.bbox[1] - prev.bbox[3])
@@ -499,7 +499,7 @@ class PDFReportAnalyzer:
 
         size_ratio = li.max_size / body_size if body_size else 1.0
         score = 0.0
-        numbering: Optional[str] = None
+        numbering: str | None = None
 
         bullet_match = bool(BULLET_RE.match(text))
         for pat in NUMBERING_PATTERNS:
@@ -849,7 +849,7 @@ class PDFReportAnalyzer:
         return dot / (na * nb)
 
     def _detect_topic_breaks(self) -> None:
-        prev_tokens: Optional[List[str]] = None
+        prev_tokens: List[str] | None = None
         median_gap = self.profile["median_line_gap"]
 
         for u in self.units:
@@ -888,7 +888,7 @@ class PDFReportAnalyzer:
         cur_pages: set = set()
         cur_reason = "document_start"
         heading_stack: List[Heading] = []
-        pending_caption: Optional[str] = None
+        pending_caption: str | None = None
 
         def heading_path() -> List[str]:
             return [h.text for h in heading_stack]
