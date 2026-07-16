@@ -12,10 +12,40 @@ from app.core.models import LLMResponse
 logger = logging.getLogger(__name__)
 
 
+def _get_value(item: Any, key: str, default: Any = None) -> Any:
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _extract_completion(response: Any) -> tuple[str, int, str]:
+    choices = _get_value(response, "choices", []) or []
+    if not choices:
+        return "", 0, "stop"
+
+    first_choice = choices[0]
+    message = _get_value(first_choice, "message", {})
+    usage = _get_value(response, "usage", {})
+
+    return (
+        _get_value(message, "content", "") or "",
+        _get_value(usage, "total_tokens", 0) or 0,
+        _get_value(first_choice, "finish_reason", "stop") or "stop",
+    )
+
+
+def _extract_stream_content(chunk: Any) -> str:
+    choices = _get_value(chunk, "choices", []) or []
+    if not choices:
+        return ""
+
+    first_choice = choices[0]
+    delta = _get_value(first_choice, "delta", {})
+    return _get_value(delta, "content", "") or ""
+
+
 class SarvamAIClient:
-    
-    BASE_URL = "https://api.sarvam.ai"
-    
+        
     SYSTEM_PROMPTS = {
         "research": """You are Filysis Business AI, an expert academic research assistant specialized in analyzing business reports, financial documents, and scientific papers. 
 
@@ -64,38 +94,6 @@ Present findings in a structured format suitable for executive decision-making."
             timeout=60.0,
         )
 
-    @staticmethod
-    def _get_value(item: Any, key: str, default: Any = None) -> Any:
-        if isinstance(item, dict):
-            return item.get(key, default)
-        return getattr(item, key, default)
-
-    @classmethod
-    def _extract_completion(cls, response: Any) -> tuple[str, int, str]:
-        choices = cls._get_value(response, "choices", []) or []
-        if not choices:
-            return "", 0, "stop"
-
-        first_choice = choices[0]
-        message = cls._get_value(first_choice, "message", {})
-        usage = cls._get_value(response, "usage", {})
-
-        return (
-            cls._get_value(message, "content", "") or "",
-            cls._get_value(usage, "total_tokens", 0) or 0,
-            cls._get_value(first_choice, "finish_reason", "stop") or "stop",
-        )
-
-    @classmethod
-    def _extract_stream_content(cls, chunk: Any) -> str:
-        choices = cls._get_value(chunk, "choices", []) or []
-        if not choices:
-            return ""
-
-        first_choice = choices[0]
-        delta = cls._get_value(first_choice, "delta", {})
-        return cls._get_value(delta, "content", "") or ""
-    
     async def chat(
         self,
         messages: List[Dict[str, str]],
@@ -130,7 +128,7 @@ Present findings in a structured format suitable for executive decision-making."
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-            content, tokens_used, finish_reason = self._extract_completion(response)
+            content, tokens_used, finish_reason = _extract_completion(response)
             
             return LLMResponse(
                 content=content,
@@ -178,7 +176,7 @@ Present findings in a structured format suitable for executive decision-making."
             def _produce() -> None:
                 try:
                     for chunk in stream:
-                        content = self._extract_stream_content(chunk)
+                        content = _extract_stream_content(chunk)
                         if content:
                             loop.call_soon_threadsafe(queue.put_nowait, content)
                 except Exception as exc:
