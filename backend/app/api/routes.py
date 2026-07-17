@@ -26,7 +26,7 @@ from app.llm.sarvam_client import SarvamAIClient, RAGPipeline
 logger = logging.getLogger(__name__)
 router = APIRouter()
 settings = get_settings()
-
+    
 pdf_pipeline = PDFExtractionPipeline(enable_ocr=settings.ocr_enabled)
 vector_store = PgVectorStore()
 llm_client = SarvamAIClient()
