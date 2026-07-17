@@ -34,18 +34,14 @@ export default function LibraryPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isDragging, setIsDragging] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: docsData, isLoading } = useQuery({
     queryKey: ["documents"],
     queryFn: () => api.documents.list(1, 100),
-  });
-
-  const uploadMutation = useMutation({
-    mutationFn: (file: File) => api.documents.upload(file),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["documents"] });
-    },
   });
 
   const deleteMutation = useMutation({
@@ -54,6 +50,41 @@ export default function LibraryPage() {
       queryClient.invalidateQueries({ queryKey: ["documents"] });
     },
   });
+
+  const addSelectedFiles = useCallback((files: File[]) => {
+    const validFiles = files.filter(f => f.type === "application/pdf");
+    const rejectedCount = files.length - validFiles.length;
+
+    if (rejectedCount > 0) {
+      setUploadError("Only PDF files are supported.");
+    } else {
+      setUploadError(null);
+    }
+
+    setSelectedFiles(validFiles);
+  }, []);
+
+  const handleUploadAndAnalyze = useCallback(async () => {
+    if (selectedFiles.length === 0) return;
+
+    setIsUploading(true);
+    setUploadError(null);
+
+    try {
+      for (const file of selectedFiles) {
+        await api.documents.upload(file);
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["documents"] });
+      setSelectedFiles([]);
+    } catch (error) {
+      setUploadError(
+        error instanceof Error ? error.message : "Failed to upload PDF"
+      );
+    } finally {
+      setIsUploading(false);
+    }
+  }, [queryClient, selectedFiles]);
 
   const docs = docsData?.items || [];
 
@@ -79,27 +110,17 @@ export default function LibraryPage() {
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
-      const files = Array.from(e.dataTransfer.files).filter(
-        f => f.type === "application/pdf"
-      );
-      files.forEach(file => {
-        uploadMutation.mutate(file);
-      });
+      addSelectedFiles(Array.from(e.dataTransfer.files));
     },
-    [uploadMutation]
+    [addSelectedFiles]
   );
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(e.target.files || []).filter(
-        f => f.type === "application/pdf"
-      );
-      files.forEach(file => {
-        uploadMutation.mutate(file);
-      });
+      addSelectedFiles(Array.from(e.target.files || []));
       if (fileInputRef.current) fileInputRef.current.value = "";
     },
-    [uploadMutation]
+    [addSelectedFiles]
   );
 
   return (
@@ -117,15 +138,15 @@ export default function LibraryPage() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploadMutation.isPending}
+            disabled={isUploading}
             className="bloomberg-btn flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {uploadMutation.isPending ? (
+            {isUploading ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <Upload className="w-4 h-4" />
             )}
-            Upload PDF
+            Choose PDF
           </button>
           <input
             ref={fileInputRef}
@@ -158,6 +179,88 @@ export default function LibraryPage() {
         </p>
         <p className="text-xs text-[#64748b] mt-1">Maximum file size: 50MB</p>
       </div>
+
+      {selectedFiles.length > 0 && (
+        <div className="bloomberg-panel p-4 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-medium text-[#d0e7f4]">
+                Selected file{selectedFiles.length > 1 ? "s" : ""}
+              </h2>
+              <p className="text-xs text-[#64748b] mt-1">
+                Preview the file to be uploaded, then start the upload and analysis.
+              </p>
+            </div>
+            <button
+              onClick={() => setSelectedFiles([])}
+              className="text-xs text-[#64748b] hover:text-[#d0e7f4] transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            {selectedFiles.map(file => (
+              <div
+                key={`${file.name}-${file.size}-${file.lastModified}`}
+                className="flex items-center justify-between gap-4 rounded-lg border border-[#1b1f2a] bg-[#121828] px-4 py-3"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-lg bg-[#00e1b7]/10 flex items-center justify-center shrink-0">
+                    <FileText className="w-4 h-4 text-[#00e1b7]" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-[#d0e7f4] truncate">
+                      {file.name}
+                    </p>
+                    <p className="text-xs text-[#64748b]">
+                      {formatFileSize(file.size)} · PDF ready for upload
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() =>
+                    setSelectedFiles(prev =>
+                      prev.filter(
+                        current =>
+                          `${current.name}-${current.size}-${current.lastModified}` !==
+                          `${file.name}-${file.size}-${file.lastModified}`
+                      )
+                    )
+                  }
+                  className="text-xs text-[#64748b] hover:text-red-400 transition-colors shrink-0"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <p className="text-xs text-[#64748b]">
+              {selectedFiles.length} file{selectedFiles.length > 1 ? "s" : ""} selected
+            </p>
+            <button
+              onClick={handleUploadAndAnalyze}
+              disabled={isUploading}
+              className="bloomberg-btn flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isUploading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4" />
+              )}
+              Upload and Analyze
+            </button>
+          </div>
+
+          {uploadError && (
+            <p className="text-xs text-red-400">
+              {uploadError}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="flex items-center gap-4">
         <div className="flex-1 relative">
