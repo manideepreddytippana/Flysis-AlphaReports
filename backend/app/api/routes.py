@@ -1,9 +1,10 @@
 
 import os
+import json
 import uuid
 import logging
 import time
-from typing import List
+from typing import List, Dict, Any
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Depends
@@ -35,6 +36,73 @@ rag_pipeline = RAGPipeline(vector_store, llm_client)
 extraction_cache: dict = {}
 
 
+def _build_extraction_dict(result, include_metadata: bool = False) -> Dict[str, Any]:
+   
+    data: Dict[str, Any] = {
+        "text_blocks": [
+            {
+                "text": b.text,
+                "page": b.page,
+                "type": b.block_type,
+                "section": b.section,
+                "heading_path": b.heading_path or [],
+                **(
+                    {"confidence": b.confidence} if include_metadata else {}
+                ),
+            }
+            for b in result.text_blocks
+        ],
+        "tables": [
+            {
+                "page": t.page,
+                "rows": t.rows,
+                "cols": t.cols,
+                "data": t.data,
+                "method": t.extraction_method,
+                **(
+                    {"confidence": t.confidence} if include_metadata else {}
+                ),
+            }
+            for t in result.tables
+        ],
+        "chunks_advanced": [
+            {
+                "chunk_id": c.chunk_id,
+                "text": c.text,
+                "page_start": c.page_start,
+                "page_end": c.page_end,
+                "heading_path": c.heading_path,
+                "chunk_type": c.chunk_type,
+                "token_estimate": c.token_estimate,
+                "boundary_reason": c.boundary_reason,
+            }
+            for c in result.chunks_advanced
+        ],
+        "outline": result.outline,
+        "analyzer_report": result.analyzer_report,
+    }
+
+    if include_metadata:
+        data["total_pages"] = result.total_pages
+        data["processing_time_ms"] = result.processing_time_ms
+        data["methods_used"] = result.methods_used
+        data["confidence"] = result.confidence
+
+    return data
+
+
+def _ensure_extraction_cached(python_doc_id: str, doc) -> None:
+    """If the extraction result for *python_doc_id* is not already cached,
+    run the PDF extraction pipeline and store the result in extraction_cache.
+    """
+    if python_doc_id in extraction_cache:
+        return
+    file_path = Path(settings.uploads_dir) / doc.filename
+    result = pdf_pipeline.extract(str(file_path), python_doc_id)
+    extraction_cache[python_doc_id] = _build_extraction_dict(result)
+
+
+
 async def _get_document_by_id(db: AsyncSession, doc_id: int) -> Document | None:
     result = await db.execute(select(Document).where(Document.id == doc_id))
     return result.scalar_one_or_none()
@@ -63,51 +131,14 @@ async def process_document_bg(doc_id: int, python_doc_id: str, file_path: str):
         try:
             logger.info(f"Starting extraction for {python_doc_id}")
             result = pdf_pipeline.extract(file_path, python_doc_id)
-            extraction_cache[python_doc_id] = {
-                "text_blocks": [
-                    {
-                        "text": b.text,
-                        "page": b.page,
-                        "type": b.block_type,
-                        "section": b.section,
-                        "heading_path": b.heading_path or [],
-                    }
-                    for b in result.text_blocks
-                ],
-                "tables": [
-                    {
-                        "page": t.page,
-                        "rows": t.rows,
-                        "cols": t.cols,
-                        "data": t.data,
-                        "method": t.extraction_method,
-                    }
-                    for t in result.tables
-                ],
-                "chunks_advanced": [
-                    {
-                        "chunk_id": c.chunk_id,
-                        "text": c.text,
-                        "page_start": c.page_start,
-                        "page_end": c.page_end,
-                        "heading_path": c.heading_path,
-                        "chunk_type": c.chunk_type,
-                        "token_estimate": c.token_estimate,
-                        "boundary_reason": c.boundary_reason,
-                    }
-                    for c in result.chunks_advanced
-                ],
-                "outline": result.outline,
-                "analyzer_report": result.analyzer_report,
-            }
+            extraction_cache[python_doc_id] = _build_extraction_dict(result)
             
             try:
-                import json as _json
                 info_dir = Path("pdf-information")
                 info_dir.mkdir(exist_ok=True)
                 info_file = info_dir / f"{python_doc_id}_data.json"
                 with open(info_file, "w", encoding="utf-8") as f:
-                    _json.dump(extraction_cache[python_doc_id], f, indent=2, ensure_ascii=False)
+                    json.dump(extraction_cache[python_doc_id], f, indent=2, ensure_ascii=False)
                 logger.info(f"Saved exact extraction data to {info_file}")
             except Exception as e:
                 logger.error(f"Failed to save extraction data JSON: {e}")
@@ -138,8 +169,7 @@ async def process_document_bg(doc_id: int, python_doc_id: str, file_path: str):
                 try:
                     summary_result = await llm_client.summarize(full_text, style="executive")
                     if summary_result and summary_result.get("summary"):
-                        import json as _json
-                        doc.extracted_summary = _json.dumps(summary_result, ensure_ascii=False)
+                        doc.extracted_summary = json.dumps(summary_result, ensure_ascii=False)
                 except Exception as sum_e:
                     logger.warning(f"Summary generation failed: {sum_e}")
             
@@ -383,49 +413,7 @@ async def extract_full(python_doc_id: str, db: AsyncSession = Depends(get_db)):
     try:
         result = pdf_pipeline.extract(str(file_path), python_doc_id)
         
-        extraction_result = {
-            "text_blocks": [
-                {
-                    "text": b.text,
-                    "page": b.page,
-                    "type": b.block_type,
-                    "confidence": b.confidence,
-                    "section": b.section,
-                    "heading_path": b.heading_path or [],
-                }
-                for b in result.text_blocks
-            ],
-            "tables": [
-                {
-                    "page": t.page,
-                    "rows": t.rows,
-                    "cols": t.cols,
-                    "data": t.data,
-                    "confidence": t.confidence,
-                    "method": t.extraction_method
-                }
-                for t in result.tables
-            ],
-            "chunks_advanced": [
-                {
-                    "chunk_id": c.chunk_id,
-                    "text": c.text,
-                    "page_start": c.page_start,
-                    "page_end": c.page_end,
-                    "heading_path": c.heading_path,
-                    "chunk_type": c.chunk_type,
-                    "token_estimate": c.token_estimate,
-                    "boundary_reason": c.boundary_reason,
-                }
-                for c in result.chunks_advanced
-            ],
-            "outline": result.outline,
-            "analyzer_report": result.analyzer_report,
-            "total_pages": result.total_pages,
-            "processing_time_ms": result.processing_time_ms,
-            "methods_used": result.methods_used,
-            "confidence": result.confidence,
-        }
+        extraction_result = _build_extraction_dict(result, include_metadata=True)
         
         extraction_cache[python_doc_id] = extraction_result
         doc.status = "ready"
@@ -477,46 +465,7 @@ async def get_text(python_doc_id: str, page: int | None = None, db: AsyncSession
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    if python_doc_id not in extraction_cache:
-        file_path = Path(settings.uploads_dir) / doc.filename
-        result = pdf_pipeline.extract(str(file_path), python_doc_id)
-        extraction_cache[python_doc_id] = {
-            "text_blocks": [
-                {
-                    "text": b.text,
-                    "page": b.page,
-                    "type": b.block_type,
-                    "section": b.section,
-                    "heading_path": b.heading_path or [],
-                }
-                for b in result.text_blocks
-            ],
-            "tables": [
-                {
-                    "page": t.page,
-                    "rows": t.rows,
-                    "cols": t.cols,
-                    "data": t.data,
-                    "method": t.extraction_method,
-                }
-                for t in result.tables
-            ],
-            "chunks_advanced": [
-                {
-                    "chunk_id": c.chunk_id,
-                    "text": c.text,
-                    "page_start": c.page_start,
-                    "page_end": c.page_end,
-                    "heading_path": c.heading_path,
-                    "chunk_type": c.chunk_type,
-                    "token_estimate": c.token_estimate,
-                    "boundary_reason": c.boundary_reason,
-                }
-                for c in result.chunks_advanced
-            ],
-            "outline": result.outline,
-            "analyzer_report": result.analyzer_report,
-        }
+    _ensure_extraction_cached(python_doc_id, doc)
     
     blocks = extraction_cache[python_doc_id]["text_blocks"]
     if page is not None:
@@ -554,9 +503,8 @@ async def get_document_data_json(python_doc_id: str, db: AsyncSession = Depends(
     info_file = Path("pdf-information") / f"{python_doc_id}_data.json"
     if info_file.exists():
         try:
-            import json as _json
             with open(info_file, "r", encoding="utf-8") as f:
-                return _json.load(f)
+                return json.load(f)
         except Exception as e:
             logger.error(f"Failed to read data JSON file: {e}")
             pass
@@ -574,46 +522,7 @@ async def index_document(python_doc_id: str, config: ChunkConfig, db: AsyncSessi
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    if python_doc_id not in extraction_cache:
-        file_path = Path(settings.uploads_dir) / doc.filename
-        result = pdf_pipeline.extract(str(file_path), python_doc_id)
-        extraction_cache[python_doc_id] = {
-            "text_blocks": [
-                {
-                    "text": b.text,
-                    "page": b.page,
-                    "type": b.block_type,
-                    "section": b.section,
-                    "heading_path": b.heading_path or [],
-                }
-                for b in result.text_blocks
-            ],
-            "tables": [
-                {
-                    "page": t.page,
-                    "rows": t.rows,
-                    "cols": t.cols,
-                    "data": t.data,
-                    "method": t.extraction_method,
-                }
-                for t in result.tables
-            ],
-            "chunks_advanced": [
-                {
-                    "chunk_id": c.chunk_id,
-                    "text": c.text,
-                    "page_start": c.page_start,
-                    "page_end": c.page_end,
-                    "heading_path": c.heading_path,
-                    "chunk_type": c.chunk_type,
-                    "token_estimate": c.token_estimate,
-                    "boundary_reason": c.boundary_reason,
-                }
-                for c in result.chunks_advanced
-            ],
-            "outline": result.outline,
-            "analyzer_report": result.analyzer_report,
-        }
+    _ensure_extraction_cached(python_doc_id, doc)
     
     chunks = [
         {
@@ -713,46 +622,7 @@ async def extract_summary(python_doc_id: str, request: SummaryRequest, db: Async
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    if python_doc_id not in extraction_cache:
-        file_path = Path(settings.uploads_dir) / doc.filename
-        result = pdf_pipeline.extract(str(file_path), python_doc_id)
-        extraction_cache[python_doc_id] = {
-            "text_blocks": [
-                {
-                    "text": b.text,
-                    "page": b.page,
-                    "type": b.block_type,
-                    "section": b.section,
-                    "heading_path": b.heading_path or [],
-                }
-                for b in result.text_blocks
-            ],
-            "tables": [
-                {
-                    "page": t.page,
-                    "rows": t.rows,
-                    "cols": t.cols,
-                    "data": t.data,
-                    "method": t.extraction_method,
-                }
-                for t in result.tables
-            ],
-            "chunks_advanced": [
-                {
-                    "chunk_id": c.chunk_id,
-                    "text": c.text,
-                    "page_start": c.page_start,
-                    "page_end": c.page_end,
-                    "heading_path": c.heading_path,
-                    "chunk_type": c.chunk_type,
-                    "token_estimate": c.token_estimate,
-                    "boundary_reason": c.boundary_reason,
-                }
-                for c in result.chunks_advanced
-            ],
-            "outline": result.outline,
-            "analyzer_report": result.analyzer_report,
-        }
+    _ensure_extraction_cached(python_doc_id, doc)
     
     all_text = "\n".join(
         b["text"] for b in extraction_cache[python_doc_id]["text_blocks"]
@@ -768,8 +638,7 @@ async def extract_summary(python_doc_id: str, request: SummaryRequest, db: Async
     )
     
    
-    import json as _json
-    doc.extracted_summary = _json.dumps(summary_result, ensure_ascii=False)
+    doc.extracted_summary = json.dumps(summary_result, ensure_ascii=False)
     await db.commit()
     
     return summary_result
@@ -782,46 +651,7 @@ async def llm_analyze(request: AnalysisRequest, db: AsyncSession = Depends(get_d
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    if request.doc_id not in extraction_cache:
-        file_path = Path(settings.uploads_dir) / doc.filename
-        result = pdf_pipeline.extract(str(file_path), request.doc_id)
-        extraction_cache[request.doc_id] = {
-            "text_blocks": [
-                {
-                    "text": b.text,
-                    "page": b.page,
-                    "type": b.block_type,
-                    "section": b.section,
-                    "heading_path": b.heading_path or [],
-                }
-                for b in result.text_blocks
-            ],
-            "tables": [
-                {
-                    "page": t.page,
-                    "rows": t.rows,
-                    "cols": t.cols,
-                    "data": t.data,
-                    "method": t.extraction_method,
-                }
-                for t in result.tables
-            ],
-            "chunks_advanced": [
-                {
-                    "chunk_id": c.chunk_id,
-                    "text": c.text,
-                    "page_start": c.page_start,
-                    "page_end": c.page_end,
-                    "heading_path": c.heading_path,
-                    "chunk_type": c.chunk_type,
-                    "token_estimate": c.token_estimate,
-                    "boundary_reason": c.boundary_reason,
-                }
-                for c in result.chunks_advanced
-            ],
-            "outline": result.outline,
-            "analyzer_report": result.analyzer_report,
-        }
+    _ensure_extraction_cached(request.doc_id, doc)
     
     all_text = "\n".join(
         b["text"] for b in extraction_cache[request.doc_id]["text_blocks"]

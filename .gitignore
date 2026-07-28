@@ -22,6 +22,7 @@ coverage/
 # Application Specific
 backend/uploads/
 backend/pdf-information/
+analysis_report.md
 docs/
 *.log
 
