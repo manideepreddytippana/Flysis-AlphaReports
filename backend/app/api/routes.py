@@ -4,6 +4,7 @@ import json
 import uuid
 import logging
 import time
+import asyncio
 from typing import List, Dict, Any
 from pathlib import Path
 
@@ -91,14 +92,14 @@ def _build_extraction_dict(result, include_metadata: bool = False) -> Dict[str, 
     return data
 
 
-def _ensure_extraction_cached(python_doc_id: str, doc) -> None:
+async def _ensure_extraction_cached(python_doc_id: str, doc) -> None:
     """If the extraction result for *python_doc_id* is not already cached,
-    run the PDF extraction pipeline and store the result in extraction_cache.
+    run the PDF extraction pipeline in a worker thread and store the result in extraction_cache.
     """
     if python_doc_id in extraction_cache:
         return
     file_path = Path(settings.uploads_dir) / doc.filename
-    result = pdf_pipeline.extract(str(file_path), python_doc_id)
+    result = await asyncio.to_thread(pdf_pipeline.extract, str(file_path), python_doc_id)
     extraction_cache[python_doc_id] = _build_extraction_dict(result)
 
 
@@ -130,7 +131,7 @@ async def process_document_bg(doc_id: int, python_doc_id: str, file_path: str):
         
         try:
             logger.info(f"Starting extraction for {python_doc_id}")
-            result = pdf_pipeline.extract(file_path, python_doc_id)
+            result = await asyncio.to_thread(pdf_pipeline.extract, file_path, python_doc_id)
             extraction_cache[python_doc_id] = _build_extraction_dict(result)
             
             try:
@@ -332,13 +333,17 @@ async def upload_document(
     with open(file_path, "wb") as f:
         f.write(contents)
     
-    try:
-        import fitz
-        pdf_doc = fitz.open(str(file_path))
-        page_count = len(pdf_doc)
-        pdf_doc.close()
-    except Exception:
-        page_count = 0
+    def _read_page_count(path_str: str) -> int:
+        try:
+            import fitz
+            pdf_doc = fitz.open(path_str)
+            count = len(pdf_doc)
+            pdf_doc.close()
+            return count
+        except Exception:
+            return 0
+
+    page_count = await asyncio.to_thread(_read_page_count, str(file_path))
     
     db_doc = Document(
         filename=doc_uuid + ".pdf",
@@ -411,7 +416,7 @@ async def extract_full(python_doc_id: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
     
     try:
-        result = pdf_pipeline.extract(str(file_path), python_doc_id)
+        result = await asyncio.to_thread(pdf_pipeline.extract, str(file_path), python_doc_id)
         
         extraction_result = _build_extraction_dict(result, include_metadata=True)
         
@@ -438,7 +443,7 @@ async def extract_tables(python_doc_id: str, db: AsyncSession = Depends(get_db))
     
     file_path = Path(settings.uploads_dir) / doc.filename
     try:
-        tables = pdf_pipeline.extract_tables_only(str(file_path))
+        tables = await asyncio.to_thread(pdf_pipeline.extract_tables_only, str(file_path))
         return {
             "tables": [
                 {
@@ -465,7 +470,7 @@ async def get_text(python_doc_id: str, page: int | None = None, db: AsyncSession
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    _ensure_extraction_cached(python_doc_id, doc)
+    await _ensure_extraction_cached(python_doc_id, doc)
     
     blocks = extraction_cache[python_doc_id]["text_blocks"]
     if page is not None:
@@ -522,7 +527,7 @@ async def index_document(python_doc_id: str, config: ChunkConfig, db: AsyncSessi
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    _ensure_extraction_cached(python_doc_id, doc)
+    await _ensure_extraction_cached(python_doc_id, doc)
     
     chunks = [
         {
@@ -622,7 +627,7 @@ async def extract_summary(python_doc_id: str, request: SummaryRequest, db: Async
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    _ensure_extraction_cached(python_doc_id, doc)
+    await _ensure_extraction_cached(python_doc_id, doc)
     
     all_text = "\n".join(
         b["text"] for b in extraction_cache[python_doc_id]["text_blocks"]
@@ -651,7 +656,7 @@ async def llm_analyze(request: AnalysisRequest, db: AsyncSession = Depends(get_d
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    _ensure_extraction_cached(request.doc_id, doc)
+    await _ensure_extraction_cached(request.doc_id, doc)
     
     all_text = "\n".join(
         b["text"] for b in extraction_cache[request.doc_id]["text_blocks"]
