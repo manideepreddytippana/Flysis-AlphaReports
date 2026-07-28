@@ -1,50 +1,90 @@
-# Filysis (AlphaReports)
+# Filysis (Flysis-AlphaReports)
 
-An intelligent document analysis, chunking, and querying platform. Filysis allows users to upload complex documents (PDFs), extract text, tables, and figures, generate semantic embeddings, and chat with their documents using state-of-the-art LLMs and vector search.
+An intelligent, enterprise-grade document analysis, semantic chunking, and querying platform. Filysis processes complex PDF documents (extracting text, structured tables, visual figures, and headings), builds hierarchical outlines, generates vector embeddings using PostgreSQL + `pgvector`, and provides interactive RAG (Retrieval-Augmented Generation) chat and structured analysis powered by Sarvam AI.
+
+---
 
 ## 🚀 Features
 
-- **Document Processing**: Robust PDF parsing using PyMuPDF and pdfplumber.
-- **Smart Chunking**: Intelligent segmentation of documents into logical chunks (text, tables, figures).
-- **Semantic Search**: Native vector search using PostgreSQL + `pgvector` and `sentence-transformers`.
-- **LLM Integration**: Integrated with Sarvam API (and adaptable to others) for conversational querying and structured data extraction.
-- **Modern Frontend**: A responsive, fast, and accessible user interface built with React 19, Vite, TailwindCSS, and Radix UI.
+- **Multi-Stage PDF Extraction Engine**:
+  - **Heading-Aware Analyzer**: Detects document outlines, font styles, numbering patterns, and topic breaks.
+  - **Table Extraction**: Multi-stage parsing via `PyMuPDF`, `pdfplumber`, and `camelot-py` into Markdown tables.
+  - **OCR Fallback**: Automatically processes scanned/image-based PDF pages via PyMuPDF OCR.
+- **Advanced Semantic Chunking**:
+  - Logical chunking respecting heading levels, table boundaries, token limits, and topic shifts.
+  - Generates exact JSON structured reports (`*_data.json`) per document.
+- **Vector Search & RAG Pipeline**:
+  - Stores chunk embeddings natively in PostgreSQL using `pgvector` and `sentence-transformers` (`all-MiniLM-L6-v2`).
+  - Contextual RAG querying with source citations, page numbers, and relevance scores.
+- **LLM-Powered Summarization & Analysis**:
+  - Executive, brief, and detailed structured summaries (key findings, metrics, recommendations).
+  - Quantitative analysis over extracted context and structured tabular data via Sarvam AI API.
+- **Modern Interactive Frontend**:
+  - Built with React 19, TypeScript, Vite, Tailwind CSS, and Radix UI.
+  - Feature-rich PDF Viewer (`react-pdf`) with side-by-side RAG Chat, Executive Summary card, and metadata analysis.
+
+---
 
 ## 🛠️ Tech Stack
 
 ### Frontend
-- React 19 + TypeScript
-- Vite (Build Tool)
-- Tailwind CSS (Styling)
-- Radix UI + shadcn/ui (Accessible Components)
-- React Query (Data Fetching)
-- React Router (Routing)
+- **Framework**: React 19 + TypeScript + Vite
+- **Styling**: Tailwind CSS + `tailwindcss-animate`
+- **UI Components**: Radix UI primitives + Lucide React icons
+- **State & Data Fetching**: TanStack Query (React Query v5) + React Router v7
+- **PDF & Markdown**: `react-pdf`, `react-markdown`
 
 ### Backend
-- Python 3.10+
-- FastAPI (Web Framework)
-- SQLAlchemy (ORM)
-- PostgreSQL with `pgvector` extension
-- PyMuPDF, pdfplumber, camelot-py (Document parsing)
-- sentence-transformers (Embeddings)
+- **Framework**: Python 3.10+ & FastAPI
+- **Database & ORM**: PostgreSQL with `pgvector` extension + SQLAlchemy (AsyncIO) + Asyncpg
+- **PDF Extraction**: PyMuPDF (`fitz`), `pdfplumber`, `camelot-py`, `pandas`, `pillow`
+- **Embeddings & Search**: `sentence-transformers` + `pgvector`
+- **LLM Integration**: `sarvamai` SDK
+
+---
 
 ## ⚙️ Prerequisites
 
-Before you begin, ensure you have met the following requirements:
-* Node.js (v18 or higher)
-* Python (v3.10 or higher)
-* PostgreSQL database with the [`pgvector`](https://github.com/pgvector/pgvector) extension installed.
+- **Node.js**: v18.0 or higher
+- **Python**: v3.10 or higher
+- **PostgreSQL**: v14+ with the [`pgvector`](https://github.com/pgvector/pgvector) extension enabled
+
+---
 
 ## 📦 Installation & Setup
 
-### 1. Clone the repository
+### 1. Clone the Repository
 ```bash
-git clone https://github.com/your-username/filysis.git
-cd filysis
+git clone https://github.com/manideepreddytippana/Flysis-AlphaReports.git
+cd Flysis-AlphaReports
 ```
 
-### 2. Backend Setup
-Navigate to the backend directory and set up a virtual environment:
+### 2. Configure Environment Variables
+Create a `.env` file in the root directory:
+
+```env
+# Database Configuration
+DATABASE_URL=postgresql+asyncpg://postgres:your_password@localhost:5432/your_db_name
+
+# AI / LLM Configuration
+SARVAM_API_KEY=your_sarvam_api_key
+EMBEDDING_MODEL=all-MiniLM-L6-v2
+
+# Storage & Upload Settings
+UPLOADS_DIR=./uploads
+MAX_FILE_SIZE_MB=file_size
+OCR_ENABLED=true
+
+# Server Settings
+HOST=0.0.0.0
+PORT=8000
+DEBUG=true
+CORS_ORIGINS=["http://localhost:3000", "http://localhost:5173"]
+```
+
+### 3. Backend Setup
+Navigate to the `backend` directory and set up a virtual environment:
+
 ```bash
 cd backend
 python -m venv .venv
@@ -58,49 +98,80 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the `backend` directory with your database connection and secrets:
-```env
-# Example .env
-DATABASE_URL=postgresql://postgres:password@localhost:5432/filysis
-APP_SECRET=your-super-secret-key
-```
+### 4. Frontend Setup
+Open a new terminal and navigate to the `frontend` directory:
 
-### 3. Frontend Setup
-Open a new terminal and navigate to the frontend directory:
 ```bash
 cd frontend
-
-# Install dependencies
-npm install
+npm install or npm i
 ```
+
+---
 
 ## 🚀 Running the Application
 
-### Start the Backend Server
-Make sure your virtual environment is active, then run:
+### 1. Start the Backend Server
+Ensure your PostgreSQL instance is running and your virtual environment is active:
+
 ```bash
 cd backend
 uvicorn main:app --reload
 ```
-The API will be available at `http://localhost:8000`. You can view the Swagger documentation at `http://localhost:8000/docs`.
+- API Endpoint: `http://localhost:8000/api/v1`
+- Interactive Swagger Docs: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
 
-### Start the Frontend Server
+### 2. Start the Frontend Development Server
 ```bash
 cd frontend
 npm run dev
 ```
-The frontend will be available at `http://localhost:5173`.
+- App Dashboard: `http://localhost:5173`
+
+---
+
+## 🔗 Key API Endpoints
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/api/v1/health` | Service health status |
+| `POST` | `/api/v1/documents/upload` | Upload PDF and trigger background extraction & indexing |
+| `GET` | `/api/v1/documents` | List documents with pagination and filtering |
+| `GET` | `/api/v1/documents/{id}` | Get metadata for a specific document |
+| `DELETE`| `/api/v1/documents/{id}` | Delete document, PDF file, vector chunks, and cache |
+| `POST` | `/api/v1/documents/{doc_id}/extract/full` | Full PDF re-extraction with metadata & outline |
+| `POST` | `/api/v1/documents/{doc_id}/extract/tables` | Extract tables only |
+| `POST` | `/api/v1/documents/{doc_id}/extract/summary`| Generate structured executive summary |
+| `POST` | `/api/v1/documents/{doc_id}/index` | Custom re-indexing into `pgvector` |
+| `POST` | `/api/v1/documents/{doc_id}/search` | Semantic vector search |
+| `POST` | `/api/v1/llm/chat` | RAG Chat / LLM completion with source citations |
+| `POST` | `/api/v1/llm/analyze` | Quantitative statistical analysis |
+
+---
 
 ## 📂 Project Structure
 
 ```
-filysis/
-├── backend/          # FastAPI backend application
-│   ├── app/          # Core application code (api, core, db, llm, vector)
-│   ├── uploads/      # Temporary storage for uploaded documents
-│   └── main.py       # Application entry point
-├── frontend/         # React application
-│   ├── src/          # Frontend source code
-│   └── public/       # Static assets
-└── docs/             # Project documentation and architecture plans
+Flysis-AlphaReports/
+├── backend/
+│   ├── app/
+│   │   ├── api/          # FastAPI route handlers (routes.py)
+│   │   ├── core/         # Settings (config.py), DB session (database.py), Pydantic schemas (models.py)
+│   │   ├── db/           # SQLAlchemy models (Document, DocumentChunk)
+│   │   ├── llm/          # Sarvam AI client & RAG pipeline
+│   │   ├── pdf/          # Extraction pipeline & PDFReportAnalyzer engine
+│   │   └── vector/       # pgvector embeddings storage & similarity search
+│   ├── uploads/          # Stored PDF uploads
+│   ├── main.py           # FastAPI entrypoint & lifecycle setup
+│   └── requirements.txt  # Backend dependencies
+├── frontend/
+│   ├── src/
+│   │   ├── api/          # API client (client.ts)
+│   │   ├── components/   # UI & Layout components
+│   │   ├── pages/        # Dashboard, Library, DocumentViewer, PdfInformation, Analytics
+│   │   ├── App.tsx       # Router configuration
+│   │   └── main.tsx      # React root & QueryClient provider
+│   ├── package.json      # Frontend dependencies & scripts
+│   └── vite.config.ts    # Vite configuration
+└── README.md
 ```
