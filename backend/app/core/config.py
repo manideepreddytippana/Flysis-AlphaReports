@@ -1,30 +1,41 @@
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from functools import lru_cache
 from typing import List
-import json
-import os
-from dotenv import load_dotenv
 
-load_dotenv()  
 
 class Settings(BaseSettings):
 
-  database_url: str = os.getenv("DATABASE_URL")
-  sarvam_api_key: str = os.getenv("SARVAM_API_KEY", "")
-  embedding_model: str = os.getenv("EMBEDDING_MODEL")
-  uploads_dir: str = os.getenv("UPLOADS_DIR", "./uploads")
-  max_file_size_mb: int = int(os.getenv("MAX_FILE_SIZE_MB"))
-  ocr_enabled: bool = str(os.getenv("OCR_ENABLED", "true")).lower() in ("true", "1", "t")
-  host: str = os.getenv("HOST")
-  port: int = int(os.getenv("PORT"))
-  debug: bool = str(os.getenv("DEBUG", "true")).lower() in ("true", "1", "t")
-  cors_origins: List[str] = json.loads(os.getenv("CORS_ORIGINS", '["http://localhost:3000", "http://localhost:5173"]'))
+    database_url: str
+    sarvam_api_key: str = ""
+    embedding_model: str = "all-MiniLM-L6-v2"
+    uploads_dir: str = "./uploads"
+    max_file_size_mb: int = 50
+    ocr_enabled: bool = True
+    host: str = "0.0.0.0"
+    port: int = 8000
+    debug: bool = True
+    cors_origins: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ]
 
-  class Config:
-    env_file = ".env"
-    env_file_encoding = "utf-8"
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        """Accept both a JSON string and an actual list from the env."""
+        if isinstance(v, str):
+            import json
+            return json.loads(v)
+        return v
+
+    model_config = {
+        "env_file": "../.env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
+
+
 @lru_cache()
-
-
 def get_settings() -> Settings:
-  return Settings()
+    return Settings()
