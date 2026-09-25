@@ -14,7 +14,6 @@ from app.db.models import Document
 
 from app.api.deps import pdf_pipeline, vector_store, llm_client, extraction_cache
 from app.api.utils import _get_document_by_id, get_upload_path, _build_extraction_dict
-from app.worker import process_document_task
 
 router = APIRouter(tags=["upload"])
 logger = logging.getLogger(__name__)
@@ -71,6 +70,7 @@ async def upload_document(
     await db.commit()
     await db.refresh(db_doc)
     
+    from app.worker import process_document_task
     process_document_task.delay(db_doc.id, doc_uuid, str(file_path))
     
     logger.info(f"Document uploaded and queued: {doc_uuid} - {file.filename}")

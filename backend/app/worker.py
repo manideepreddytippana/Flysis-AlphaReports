@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 
 from celery import Celery
+from celery.signals import worker_process_init
 
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
@@ -26,6 +27,16 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
 )
+
+@worker_process_init.connect
+def init_worker(**kwargs):
+    """
+    Pre-warm the ML models into memory when the Celery worker boots up.
+    This guarantees that the first user upload will process instantly without a 15-second cold start!
+    """
+    logger.info("Pre-warming ML models into Celery RAM...")
+    from app.vector.pgvector_store import get_embedding_model
+    get_embedding_model()
 
 async def async_process_document(doc_id: int, python_doc_id: str, file_path: str):
     async with AsyncSessionLocal() as db:

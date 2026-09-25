@@ -5,7 +5,6 @@ from functools import lru_cache
 import numpy as np
 from sqlalchemy import text, select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sentence_transformers import SentenceTransformer
 
 from app.core.config import get_settings
 from app.db.models import DocumentChunk
@@ -16,6 +15,8 @@ logger = logging.getLogger(__name__)
 @lru_cache()
 def get_embedding_model():
     """Lazy-load the embedding model."""
+    from sentence_transformers import SentenceTransformer
+    
     settings = get_settings()
     model_name = settings.embedding_model
     logger.info(f"Loading embedding model: {model_name}")

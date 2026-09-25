@@ -11,7 +11,7 @@ RUN npm run build
 
 # Production stage using Nginx
 FROM nginx:alpine
-# Copy the built assets from the builder stage
+# Copies built assets from the builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 # Expose port 80
