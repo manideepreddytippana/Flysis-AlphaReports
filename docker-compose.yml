@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL Database with pgvector extension
+  db:
+    image: ankane/pgvector:latest
+    env_file:
+      - .env.docker
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 2. Redis Message Broker & Result Backend
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+
+  # 3. FastAPI Backend
+  backend:
+    build: 
+      context: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.docker
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/pdf-information:/app/pdf-information
+
+  # 4. Celery Worker
+  celery:
+    build: 
+      context: ./backend
+    # We override the default CMD to run Celery instead of Uvicorn
+    command: celery -A app.worker.celery_app worker --loglevel=info
+    env_file:
+      - .env.docker
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/pdf-information:/app/pdf-information
+
+  # 5. React Frontend
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
