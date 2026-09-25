@@ -12,6 +12,8 @@ import pandas as pd
 from PIL import Image
 
 from app.pdf.analyzer import PDFReportAnalyzer
+from app.pdf.table_extractor import TableExtractor
+from app.pdf.ocr_extractor import OCRExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +122,7 @@ class PDFExtractionPipeline:
         if len(result.tables) == 0:
             logger.info(f"[{doc_id}] Stage 2: pdfplumber supplementary table extraction")
             try:
-                plumber_tables = self._extract_pdfplumber_tables(file_path)
+                plumber_tables = TableExtractor.extract_pdfplumber_tables(file_path, ExtractedTable)
                 result.tables.extend(plumber_tables)
                 if plumber_tables:
                     result.methods_used.append("pdfplumber")
@@ -131,7 +133,7 @@ class PDFExtractionPipeline:
         if len(result.tables) == 0:
             logger.info(f"[{doc_id}] Stage 3: camelot table extraction")
             try:
-                camelot_tables = self._extract_camelot(file_path)
+                camelot_tables = TableExtractor.extract_camelot(file_path, ExtractedTable)
                 result.tables.extend(camelot_tables)
                 if camelot_tables:
                     result.methods_used.append("camelot")
@@ -142,7 +144,7 @@ class PDFExtractionPipeline:
         if len(result.text_blocks) == 0 and self.enable_ocr:
             logger.info(f"[{doc_id}] Stage 4: PyMuPDF OCR fallback")
             try:
-                ocr_result = self._extract_ocr_pymupdf(file_path, doc_id)
+                ocr_result = OCRExtractor.extract_ocr_pymupdf(file_path, doc_id, ExtractionResult, TextBlock)
                 result.text_blocks = ocr_result.text_blocks
                 if not result.total_pages:
                     result.total_pages = ocr_result.total_pages
@@ -291,140 +293,7 @@ class PDFExtractionPipeline:
         doc.close()
         return result
     
-    def _extract_pdfplumber_tables(self, file_path: str) -> List[ExtractedTable]:
-        """Stage 2: Extract tables using pdfplumber."""
-        tables = []
 
-        with pdfplumber.open(file_path) as pdf:
-            for page_num, page in enumerate(pdf.pages):
-                try:
-                    for table in page.find_tables():
-                        table_data = table.extract()
-                        bbox = table.bbox
-
-                        if not table_data or len(table_data) < 2:
-                            continue
-
-                        cleaned = []
-                        for row in table_data:
-                            cleaned_row = [str(cell).strip() if cell is not None else ""
-                                          for cell in row]
-                            cleaned.append(cleaned_row)
-
-                        if cleaned and any(any(cell for cell in row) for row in cleaned):
-                            tables.append(ExtractedTable(
-                                page=page_num + 1,
-                                rows=len(cleaned),
-                                cols=max(len(row) for row in cleaned),
-                                data=cleaned,
-                                confidence=0.85,
-                                extraction_method="pdfplumber",
-                                bbox=list(bbox)
-                            ))
-
-                except Exception as e:
-                    logger.warning(f"Table extraction failed on page {page_num + 1}: {e}")
-
-        return tables
-
-    def _extract_camelot(self, file_path: str) -> List[ExtractedTable]:
-        """Stage 3: Extract tables using camelot (no ghostscript needed for lattice mode)."""
-        tables = []
-
-        try:
-            import camelot
-
-            try:
-                lattice_tables = camelot.read_pdf(file_path, pages='all', flavor='lattice')
-
-                for table in lattice_tables:
-                    if table.df is not None and not table.df.empty:
-                        data = table.df.values.tolist()
-                        tables.append(ExtractedTable(
-                            page=table.page,
-                            rows=len(data),
-                            cols=len(data[0]) if data else 0,
-                            data=[[str(cell) for cell in row] for row in data],
-                            confidence=table.accuracy / 100 if hasattr(table, 'accuracy') else 0.8,
-                            extraction_method="camelot-lattice",
-                        ))
-            except Exception as e:
-                logger.warning(f"Camelot lattice mode failed: {e}")
-
-            if len(tables) == 0:
-                try:
-                    stream_tables = camelot.read_pdf(file_path, pages='all', flavor='stream')
-
-                    for table in stream_tables:
-                        if table.df is not None and not table.df.empty:
-                            data = table.df.values.tolist()
-                            tables.append(ExtractedTable(
-                                page=table.page,
-                                rows=len(data),
-                                cols=len(data[0]) if data else 0,
-                                data=[[str(cell) for cell in row] for row in data],
-                                confidence=0.75,
-                                extraction_method="camelot-stream",
-                            ))
-                except Exception as e:
-                    logger.warning(f"Camelot stream mode failed: {e}")
-
-        except ImportError:
-            logger.warning("camelot-py not installed, skipping camelot extraction")
-        except Exception as e:
-            logger.error(f"Camelot extraction failed: {e}")
-
-        return tables
-
-    def _extract_ocr_pymupdf(self, file_path: str, doc_id: str) -> ExtractionResult:
-        """
-        Stage 4: OCR extraction using PyMuPDF's built-in capabilities.
-
-        PyMuPDF can extract text from image-based pages by rendering them
-        and using its built-in text recognition on the rendered images.
-        """
-        result = ExtractionResult(doc_id=doc_id)
-
-        doc = fitz.open(file_path)
-        result.total_pages = len(doc)
-
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-
-            mat = fitz.Matrix(3, 3)
-            pix = page.get_pixmap(matrix=mat)
-
-            text = page.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE)
-
-            if text.strip():
-                for line in text.strip().split('\n'):
-                    if line.strip():
-                        result.text_blocks.append(TextBlock(
-                            text=line.strip(),
-                            page=page_num + 1,
-                            block_type="text",
-                            confidence=0.7
-                        ))
-            else:
-
-                text_instances = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
-                for block in text_instances.get("blocks", []):
-                    if block.get("type") == 0:
-                        for line in block.get("lines", []):
-                            line_text = ""
-                            for span in line.get("spans", []):
-                                line_text += span.get("text", "")
-                            if line_text.strip():
-                                result.text_blocks.append(TextBlock(
-                                    text=line_text.strip(),
-                                    page=page_num + 1,
-                                    bbox=block.get("bbox"),
-                                    block_type="text",
-                                    confidence=0.6
-                                ))
-
-        doc.close()
-        return result
 
     def _calculate_confidence(self, result: ExtractionResult) -> float:
         """Calculate overall extraction confidence score."""
@@ -474,13 +343,13 @@ class PDFExtractionPipeline:
 
         if not tables:
             try:
-                tables = self._extract_pdfplumber_tables(file_path)
+                tables = TableExtractor.extract_pdfplumber_tables(file_path, ExtractedTable)
             except Exception as e:
                 logger.error(f"pdfplumber table extraction failed: {e}")
 
         if not tables:
             try:
-                tables = self._extract_camelot(file_path)
+                tables = TableExtractor.extract_camelot(file_path, ExtractedTable)
             except Exception as e:
                 logger.error(f"camelot table extraction failed: {e}")
 
