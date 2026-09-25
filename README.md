@@ -22,6 +22,9 @@ An intelligent, enterprise-grade document analysis, semantic chunking, and query
 - **Modern Interactive Frontend**:
   - Built with React 19, TypeScript, Vite, Tailwind CSS, and Radix UI.
   - Feature-rich PDF Viewer (`react-pdf`) with side-by-side RAG Chat, Executive Summary card, and metadata analysis.
+- **Asynchronous Task Processing**:
+  - Celery and Redis are utilized for offloading heavy PDF processing and ML model execution to background workers, keeping the API blazing fast.
+  - Smart "Pre-warming" and lazy loading of ML models to eliminate cold start delays.
 
 ---
 
@@ -34,12 +37,14 @@ An intelligent, enterprise-grade document analysis, semantic chunking, and query
 - **State & Data Fetching**: TanStack Query (React Query v5) + React Router v7
 - **PDF & Markdown**: `react-pdf`, `react-markdown`
 
-### Backend
+### Backend & Infrastructure
 - **Framework**: Python 3.10+ & FastAPI
 - **Database & ORM**: PostgreSQL with `pgvector` extension + SQLAlchemy (AsyncIO) + Asyncpg
+- **Task Queue**: Celery + Redis
 - **PDF Extraction**: PyMuPDF (`fitz`), `pdfplumber`, `camelot-py`, `pandas`, `pillow`
 - **Embeddings & Search**: `sentence-transformers` + `pgvector`
 - **LLM Integration**: `sarvamai` SDK
+- **DevOps**: Docker & Docker Compose (Full containerized multi-service architecture)
 
 ---
 
@@ -47,7 +52,8 @@ An intelligent, enterprise-grade document analysis, semantic chunking, and query
 
 - **Node.js**: v18.0 or higher
 - **Python**: v3.10 or higher
-- **PostgreSQL**: v14+ with the [`pgvector`](https://github.com/pgvector/pgvector) extension enabled
+- **Docker & Docker Compose**: (Recommended for running the full stack)
+- **PostgreSQL & Redis**: (Only required if running locally without Docker)
 
 ---
 
@@ -60,92 +66,78 @@ cd Flysis-AlphaReports
 ```
 
 ### 2. Configure Environment Variables
-Create a `.env` file in the root directory:
+You have two options depending on how you want to run the app. Copy the appropriate configuration for your setup:
 
+**Option A: For Docker (`.env.docker`)**
+Create `.env.docker` in the root folder. Docker will use `db` and `redis` internally.
 ```env
-# Database Configuration
-DATABASE_URL=postgresql+asyncpg://postgres:your_password@localhost:5432/your_db_name
+POSTGRES_USER=your_db_user
+POSTGRES_PASSWORD=your_db_password
+POSTGRES_DB=your_db_name
+DATABASE_URL=postgresql+asyncpg://your_db_user:your_db_password@db:5432/your_db_name
+REDIS_URL=redis://redis:6379/0
 
-# AI / LLM Configuration
 SARVAM_API_KEY=your_sarvam_api_key
 EMBEDDING_MODEL=all-MiniLM-L6-v2
-
-# Storage & Upload Settings
-UPLOADS_DIR=./uploads
-MAX_FILE_SIZE_MB=file_size
-OCR_ENABLED=true
-
-# Server Settings
+UPLOADS_DIR=/app/uploads
+MAX_FILE_SIZE_MB=50
+OCR_ENABLED=True
 HOST=0.0.0.0
 PORT=8000
-DEBUG=true
-CORS_ORIGINS=["http://localhost:3000", "http://localhost:5173"]
+DEBUG=True
 ```
 
-### 3. Backend Setup
-Navigate to the `backend` directory and set up a virtual environment:
-
-```bash
-cd backend
-python -m venv .venv
-
-# On Windows
-.venv\Scripts\activate
-# On macOS/Linux
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+**Option B: For Local System (`.env.local`)**
+Create `.env.local` if running via manual terminal commands.
+```env
+DATABASE_URL=postgresql+asyncpg://your_db_user:your_db_password@localhost:5432/your_db_name
+REDIS_URL=redis://localhost:6379/0
+SARVAM_API_KEY=your_sarvam_api_key
+EMBEDDING_MODEL=all-MiniLM-L6-v2
+UPLOADS_DIR=./uploads
+MAX_FILE_SIZE_MB=50
+OCR_ENABLED=True
+HOST=0.0.0.0
+PORT=8000
+DEBUG=True
 ```
-
-### 4. Frontend Setup
-Open a new terminal and navigate to the `frontend` directory:
-
-```bash
-cd frontend
-npm install or npm i
-```
+*(Make sure you rename `.env.local` to `.env` or point your app to it when running locally!)*
 
 ---
 
 ## 🚀 Running the Application
 
-### 1. Start the Backend Server
-Ensure your PostgreSQL instance is running and your virtual environment is active:
+### Option 1: Docker Compose (Highly Recommended)
+You can boot the entire infrastructure (Frontend, Backend, PostgreSQL, Redis, and Celery Worker) using a single command:
 
 ```bash
-cd backend
-uvicorn main:app --reload
+docker-compose up -d --build
 ```
+- App Dashboard: `http://localhost:3000`
 - API Endpoint: `http://localhost:8000/api/v1`
-- Interactive Swagger Docs: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
 
-### 2. Start the Frontend Development Server
+### Option 2: Local Terminals (Manual Setup)
+If you prefer running services manually on your Windows/Mac machine without Docker:
+
+**1. Start the Celery Worker**
+```bash
+cd backend
+venv\Scripts\activate
+celery -A app.worker.celery_app worker --loglevel=info -P solo
+```
+
+**2. Start the Backend API**
+```bash
+cd backend
+venv\Scripts\activate
+uvicorn app.main:app --reload
+```
+
+**3. Start the Frontend Dev Server**
 ```bash
 cd frontend
 npm run dev
 ```
-- App Dashboard: `http://localhost:5173`
-
----
-
-## 🔗 Key API Endpoints
-
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/api/v1/health` | Service health status |
-| `POST` | `/api/v1/documents/upload` | Upload PDF and trigger background extraction & indexing |
-| `GET` | `/api/v1/documents` | List documents with pagination and filtering |
-| `GET` | `/api/v1/documents/{id}` | Get metadata for a specific document |
-| `DELETE`| `/api/v1/documents/{id}` | Delete document, PDF file, vector chunks, and cache |
-| `POST` | `/api/v1/documents/{doc_id}/extract/full` | Full PDF re-extraction with metadata & outline |
-| `POST` | `/api/v1/documents/{doc_id}/extract/tables` | Extract tables only |
-| `POST` | `/api/v1/documents/{doc_id}/extract/summary`| Generate structured executive summary |
-| `POST` | `/api/v1/documents/{doc_id}/index` | Custom re-indexing into `pgvector` |
-| `POST` | `/api/v1/documents/{doc_id}/search` | Semantic vector search |
-| `POST` | `/api/v1/llm/chat` | RAG Chat / LLM completion with source citations |
-| `POST` | `/api/v1/llm/analyze` | Quantitative statistical analysis |
 
 ---
 
@@ -153,22 +145,29 @@ npm run dev
 
 ```
 Flysis-AlphaReports/
+├── docker-compose.yml    # Full stack orchestrator
+├── .env.docker           # Docker-specific environment variables
+├── .env.local            # Local machine environment variables
 ├── backend/
+│   ├── Dockerfile        # Python 3.10 Backend/Celery image
 │   ├── app/
-│   │   ├── api/          # FastAPI route handlers (routes.py)
-│   │   ├── core/         # Settings (config.py), DB session (database.py), Pydantic schemas (models.py)
+│   │   ├── main.py       # FastAPI entrypoint & lifecycle setup
+│   │   ├── worker.py     # Celery App initialization and ML Pre-Warming
+│   │   ├── api/          # Route handlers with modular routers (upload.py, etc)
+│   │   ├── core/         # Settings (config.py), DB session (database.py)
 │   │   ├── db/           # SQLAlchemy models (Document, DocumentChunk)
 │   │   ├── llm/          # Sarvam AI client & RAG pipeline
 │   │   ├── pdf/          # Extraction pipeline & PDFReportAnalyzer engine
 │   │   └── vector/       # pgvector embeddings storage & similarity search
 │   ├── uploads/          # Stored PDF uploads
-│   ├── main.py           # FastAPI entrypoint & lifecycle setup
 │   └── requirements.txt  # Backend dependencies
 ├── frontend/
+│   ├── Dockerfile        # Node 20 / Nginx Frontend image
 │   ├── src/
 │   │   ├── api/          # API client (client.ts)
-│   │   ├── components/   # UI & Layout components
-│   │   ├── pages/        # Dashboard, Library, DocumentViewer, PdfInformation, Analytics
+│   │   ├── components/   # UI & Modular Components (PDFViewer, ChatInterface, etc)
+│   │   ├── hooks/        # Custom React Hooks (useDocumentChat, usePDFExtraction)
+│   │   ├── pages/        # Dashboard, Library, DocumentViewer, Analytics
 │   │   ├── App.tsx       # Router configuration
 │   │   └── main.tsx      # React root & QueryClient provider
 │   ├── package.json      # Frontend dependencies & scripts
