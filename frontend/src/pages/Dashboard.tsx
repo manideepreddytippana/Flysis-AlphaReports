@@ -42,7 +42,6 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* KPI: Total Documents */}
         <div className="bloomberg-panel p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-[#64748b]">Total Documents</h3>
@@ -53,10 +52,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* KPI: Ready Documents */}
         <div className="bloomberg-panel p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-[#64748b]">Ready for Analysis</h3>
+            <h3 className="text-sm font-medium text-[#64748b]">Processed Documents</h3>
             <CheckCircle2 className="w-4 h-4 text-[#00e1b7]" />
           </div>
           <div className="text-2xl font-semibold text-[#d0e7f4]">
@@ -64,7 +62,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* KPI: Processing/Error */}
         <div className="bloomberg-panel p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-[#64748b]">Processing / Error</h3>
@@ -78,7 +75,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* KPI: Total Pages */}
         <div className="bloomberg-panel p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-[#64748b]">Total Pages Extracted</h3>
