@@ -1,21 +1,21 @@
 import logging
+import warnings
 import fitz
 from typing import Any
 
+warnings.warn("OCRExtractor is deprecated; use HybridPDFExtractionService with RapidOCR instead.", DeprecationWarning)
 logger = logging.getLogger(__name__)
+
 
 class OCRExtractor:
     @staticmethod
     def extract_ocr_pymupdf(file_path: str, doc_id: str, ExtractionResult, TextBlock) -> Any:
-        """OCR extraction using PyMuPDF's built-in capabilities."""
         result = ExtractionResult(doc_id=doc_id)
         doc = fitz.open(file_path)
         result.total_pages = len(doc)
 
         for page_num in range(len(doc)):
             page = doc[page_num]
-            mat = fitz.Matrix(3, 3)
-            pix = page.get_pixmap(matrix=mat)
             text = page.get_text("text", flags=fitz.TEXT_PRESERVE_WHITESPACE)
 
             if text.strip():

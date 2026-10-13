@@ -2,11 +2,14 @@ import re
 import json
 import math
 import statistics
+import warnings
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Any
 from collections import Counter, defaultdict
 
-import fitz  
+warnings.warn("PDFReportAnalyzer is deprecated; use HybridPDFExtractionService instead.", DeprecationWarning)
+
+import fitz
 
 try:
     import tiktoken
@@ -20,30 +23,28 @@ except Exception:
     def count_tokens(text: str) -> int:
         if not text:
             return 0
-        # not exact token count it is just a estimation
+        # estimated token count only 
         return max(1, int(len(text.split()) * 1.3))
 
+_NEWLINE_SEP_TOKENS = count_tokens("\n\n")
 
 
-
-# PyMuPDF span "flags" bitfield
 FLAG_SUPERSCRIPT = 1 << 0
 FLAG_ITALIC = 1 << 1
 FLAG_SERIFED = 1 << 2
 FLAG_MONOSPACED = 1 << 3
 FLAG_BOLD = 1 << 4
 
-# Embedded font names look like "ABCDEF+Arial-Bold" -> strip prefix
 SUBSET_PREFIX_RE = re.compile(r"^[A-Za-z0-9]{6}\+")
 
 
 NUMBERING_PATTERNS = [
-    re.compile(r"^(?P<num>\d+(?:\.\d+){1,5})\.?\s+\S"),        # 1.1 / 1.2.3
-    re.compile(r"^(?P<num>[A-Z]\.\d+(?:\.\d+)*)\.?\s+\S"),      # A.1 / A.1.2
-    re.compile(r"^(?P<num>\d+)[.)]\s+\S"),                      # 1.  / 1)
-    re.compile(r"^(?P<num>[A-Z])[.)]\s+\S"),                    # A.  / A)
-    re.compile(r"^(?P<num>[A-Z]\d+(?:\.\d+)*)\.?\s+\S"),        # A1 / A1.2
-    re.compile(r"^(?P<num>[IVXLCDM]{1,7})\.\s+\S"),             # I.  II.  III.
+    re.compile(r"^(?P<num>\d+(?:\.\d+){1,5})\.?\s+\S"),      
+    re.compile(r"^(?P<num>[A-Z]\.\d+(?:\.\d+)*)\.?\s+\S"),     
+    re.compile(r"^(?P<num>\d+)[.)]\s+\S"),                      
+    re.compile(r"^(?P<num>[A-Z])[.)]\s+\S"),                  
+    re.compile(r"^(?P<num>[A-Z]\d+(?:\.\d+)*)\.?\s+\S"),      
+    re.compile(r"^(?P<num>[IVXLCDM]{1,7})\.\s+\S"),            
     re.compile(
         r"^(?:Chapter|Section|Part|Appendix)\s+(?P<num>[\dA-Z]+)\b",
         re.IGNORECASE,
@@ -163,14 +164,6 @@ class Chunk:
 
 
 class PDFReportAnalyzer:
-    """
-    Usage:
-        analyzer = PDFReportAnalyzer("report.pdf").run()
-        for h in analyzer.outline():
-            print(h)
-        for c in analyzer.chunks_as_dicts():
-            print(c)
-    """
 
     HEADING_SPLIT_LEVEL = 2        
     HEADING_SCORE_THRESHOLD = 3.0   
@@ -215,6 +208,15 @@ class PDFReportAnalyzer:
         self._assign_heading_levels()
         self._build_chunks()
         self._build_report()
+        return self
+
+    def run_tables_only(self) -> "PDFReportAnalyzer":
+        self._extract_lines()
+        if not self.lines:
+            self.report["empty_or_scanned"] = True
+            self.report["num_pages"] = len(self.doc)
+            return self
+        self._detect_tables()
         return self
 
     def _extract_lines(self) -> None:
@@ -299,7 +301,7 @@ class PDFReportAnalyzer:
                     text_char_total += len(text)
                     idx_counter += 1
 
-        # Heuristic flag for scanned/image-only documents (edge case 13)
+        # Heuristic flag for scanned/image-only documents
         if text_char_total < 50 and image_block_pages:
             self.report["scanned_pdf_warning"] = True
 
@@ -328,7 +330,7 @@ class PDFReportAnalyzer:
             body_font=body_font,
             body_color=body_color,
             size_counter=size_chars,
-            median_line_gap=body_size * 0.3,  # placeholder, refined later
+            median_line_gap=body_size * 0.3,
         )
 
     def _detect_header_footer(self) -> None:
@@ -454,9 +456,12 @@ class PDFReportAnalyzer:
     def _compute_gaps(self) -> None:
         gaps_sample: List[float] = []
         body_size = self.profile["body_size"]
+        lines_by_page: Dict[int, List[LineInfo]] = defaultdict(list)
+        for li in self.lines:
+            lines_by_page[li.page].append(li)
 
         for pno in range(len(self.doc)):
-            page_lines = [li for li in self.lines if li.page == pno]
+            page_lines = lines_by_page.get(pno, [])
             ordered = self._ordered_lines_for_page(page_lines)
             prev: LineInfo | None = None
             for li in ordered:
@@ -889,14 +894,30 @@ class PDFReportAnalyzer:
         heading_stack: List[Heading] = []
         pending_caption: str | None = None
 
+        cur_token_total = 0
+        SAFETY_MARGIN = 30
+
         def heading_path() -> List[str]:
             return [h.text for h in heading_stack]
 
         def cur_tokens() -> int:
-            return count_tokens("\n\n".join(cur_parts)) if cur_parts else 0
+            return cur_token_total
+
+        def append_part(text: str) -> None:
+            nonlocal cur_token_total
+            sep_cost = _NEWLINE_SEP_TOKENS if cur_parts else 0
+            cur_token_total += count_tokens(text) + sep_cost
+            cur_parts.append(text)
+
+        def projected_tokens(text: str) -> int:
+            sep_cost = _NEWLINE_SEP_TOKENS if cur_parts else 0
+            estimate = cur_token_total + count_tokens(text) + sep_cost
+            if estimate > self.max_chunk_tokens - SAFETY_MARGIN:
+                return count_tokens("\n\n".join(cur_parts + [text]))
+            return estimate
 
         def finalize(chunk_type: str = "narrative"):
-            nonlocal cur_parts, cur_pages
+            nonlocal cur_parts, cur_pages, cur_token_total
             if not cur_parts:
                 return
             text = "\n\n".join(cur_parts)
@@ -912,6 +933,7 @@ class PDFReportAnalyzer:
             ))
             cur_parts = []
             cur_pages = set()
+            cur_token_total = 0
 
         for u in self.units:
             if u.type == "heading":
@@ -930,14 +952,14 @@ class PDFReportAnalyzer:
                 if h.level >= 1:
                     heading_stack.append(h)
 
-                cur_parts.append(u.text)
+                append_part(u.text)
                 cur_pages.add(u.page_start)
                 pending_caption = None
                 continue
 
             if u.type == "caption":
                 pending_caption = u.text
-                cur_parts.append(u.text)
+                append_part(u.text)
                 cur_pages.add(u.page_start)
                 continue
 
@@ -945,12 +967,15 @@ class PDFReportAnalyzer:
                
                 if cur_parts and pending_caption and cur_parts[-1] == pending_caption:
                     cur_parts.pop()
+                    cur_token_total -= count_tokens(pending_caption) + (
+                        _NEWLINE_SEP_TOKENS if cur_parts else 0
+                    )
                 if cur_parts:
                     finalize()
                 table_text = u.text
                 if pending_caption:
                     table_text = pending_caption + "\n" + table_text
-                cur_parts.append(table_text)
+                append_part(table_text)
                 cur_pages.add(u.page_start)
                 finalize(chunk_type="table")
                 cur_reason = "table"
@@ -960,15 +985,15 @@ class PDFReportAnalyzer:
             pending_caption = None
 
             if u.type == "list":
-                projected = count_tokens("\n\n".join(cur_parts + [u.text])) if cur_parts else count_tokens(u.text)
+                projected = projected_tokens(u.text) if cur_parts else count_tokens(u.text)
                 if cur_parts and projected > self.max_chunk_tokens and cur_tokens() >= self.min_chunk_tokens:
                     finalize()
                     cur_reason = "size_limit"
-                cur_parts.append(u.text)
+                append_part(u.text)
                 cur_pages.update(range(u.page_start, u.page_end + 1))
                 continue
 
-            projected = count_tokens("\n\n".join(cur_parts + [u.text])) if cur_parts else count_tokens(u.text)
+            projected = projected_tokens(u.text) if cur_parts else count_tokens(u.text)
             if cur_parts:
                 if (
                     u.topic_break == "soft"
@@ -981,7 +1006,7 @@ class PDFReportAnalyzer:
                     finalize()
                     cur_reason = "size_limit"
 
-            cur_parts.append(u.text)
+            append_part(u.text)
             cur_pages.update(range(u.page_start, u.page_end + 1))
 
         finalize()

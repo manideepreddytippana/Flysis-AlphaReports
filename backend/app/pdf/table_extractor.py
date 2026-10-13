@@ -1,13 +1,18 @@
 import logging
-import pdfplumber
+import warnings
 from typing import List, Any
 
+warnings.warn("TableExtractor is deprecated; use HybridPDFExtractionService instead.", DeprecationWarning)
 logger = logging.getLogger(__name__)
+
+try:
+    import pdfplumber
+except ImportError:
+    pdfplumber = None
 
 class TableExtractor:
     @staticmethod
     def extract_pdfplumber_tables(file_path: str, ExtractedTable) -> List[Any]:
-        """Extract tables using pdfplumber."""
         tables = []
         with pdfplumber.open(file_path) as pdf:
             for page_num, page in enumerate(pdf.pages):
@@ -41,7 +46,6 @@ class TableExtractor:
 
     @staticmethod
     def extract_camelot(file_path: str, ExtractedTable) -> List[Any]:
-        """Extract tables using camelot (no ghostscript needed for lattice mode)."""
         tables = []
         try:
             import camelot
