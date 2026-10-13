@@ -36,8 +36,8 @@ services:
   celery:
     build: 
       context: ./backend
-    # We override the default CMD to run Celery instead of Uvicorn
-    command: celery -A app.worker.celery_app worker --loglevel=info
+    # Celery worker with concurrency limit and memory ceiling for Docling models
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2 --max-memory-per-child=3500000
     env_file:
       - .env.docker
     depends_on:
@@ -46,6 +46,10 @@ services:
     volumes:
       - ./backend/uploads:/app/uploads
       - ./backend/pdf-information:/app/pdf-information
+    deploy:
+      resources:
+        limits:
+          memory: 4096M
 
   # 5. React Frontend
   frontend:
