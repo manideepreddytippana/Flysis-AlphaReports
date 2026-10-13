@@ -38,6 +38,13 @@ async def upload_document(
             detail=f"File too large. Max size: {settings.max_file_size_mb}MB"
         )
     
+    if not contents.startswith(b"%PDF-"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid PDF file: file must be a valid PDF starting with %PDF- header"
+        )
+
+    
     doc_uuid = str(uuid.uuid4())
     upload_dir = get_upload_path()
     file_path = upload_dir / f"{doc_uuid}.pdf"

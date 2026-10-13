@@ -10,8 +10,13 @@ class Settings(BaseSettings):
     sarvam_api_key: str = ""
     embedding_model: str = "all-MiniLM-L6-v2"
     uploads_dir: str = "./uploads"
+    pdf_information_dir: str = "./pdf-information"
     max_file_size_mb: int = 50
     ocr_enabled: bool = True
+    docling_table_mode: str = "accurate"
+    docling_ocr_engine: str = "rapidocr"
+    docling_ocr_enabled: bool = True
+    docling_max_tokens: int = 250
     redis_url: str = "redis://localhost:6379/0"
     host: str = "0.0.0.0"
     port: int = 8000

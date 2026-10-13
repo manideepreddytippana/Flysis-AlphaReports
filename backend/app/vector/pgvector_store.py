@@ -24,7 +24,6 @@ def get_embedding_model():
 
 
 class PgVectorStore:
-    """Manages document embeddings in PostgreSQL using pgvector."""
     
     def __init__(self):
         self._embedding_model = None
@@ -41,22 +40,18 @@ class PgVectorStore:
         doc_id: int,
         chunks: List[Dict[str, Any]],
         chunk_size: int = 512,
-        overlap: int = 128
+        overlap: int = 128,
+        already_chunked: bool = False,
     ) -> Dict[str, Any]:
-        """
-        Index document chunks into PostgreSQL with pgvector embeddings.
-        
-        Args:
-            db: SQLAlchemy session
-            doc_id: Document database ID
-            chunks: List of chunk dicts with 'text', 'page', 'type', 'section'
-            chunk_size: Target chunk size in characters
-            overlap: Overlap between chunks in characters
-        """
+
         await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc_id))
         await db.flush()
         
-        prepared_chunks = self._prepare_chunks(chunks, chunk_size, overlap)
+        if already_chunked:
+            prepared_chunks = [c for c in chunks if c.get("text", "").strip()]
+        else:
+            prepared_chunks = self._prepare_chunks(chunks, chunk_size, overlap)
+
         
         if not prepared_chunks:
             await db.commit()
@@ -71,17 +66,21 @@ class PgVectorStore:
             embeddings = self.embedding_model.encode(texts, show_progress_bar=False)
             all_embeddings.extend(embeddings.tolist())
         
+        VALID_CHUNK_TYPES = {"text", "table", "figure", "heading"}
         for i, chunk in enumerate(prepared_chunks):
+            raw_type = str(chunk.get("type", "text")).lower()
+            normalized_type = raw_type if raw_type in VALID_CHUNK_TYPES else "text"
             db_chunk = DocumentChunk(
                 document_id=doc_id,
                 chunk_index=i,
                 content=chunk["text"],
                 page_number=chunk.get("page", 0),
-                chunk_type=chunk.get("type", "text"),
+                chunk_type=normalized_type,
                 section_title=chunk.get("section", ""),
                 embedding=all_embeddings[i],
             )
             db.add(db_chunk)
+
         
         await db.commit()
         
@@ -100,9 +99,7 @@ class PgVectorStore:
         query: str,
         top_k: int = 5,
     ) -> List[Dict[str, Any]]:
-        """
-        Semantic search within a document using pgvector cosine distance.
-        """
+       
         query_embedding = self.embedding_model.encode([query])[0].tolist()
         
         results = await db.execute(
@@ -140,7 +137,6 @@ class PgVectorStore:
         return formatted_results
     
     async def delete_document_chunks(self, db: AsyncSession, doc_id: int) -> bool:
-        """Delete all chunks for a document."""
         try:
             await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc_id))
             await db.commit()
@@ -156,7 +152,6 @@ class PgVectorStore:
         chunk_size: int,
         overlap: int
     ) -> List[Dict[str, Any]]:
-        """Prepare and merge chunks with overlap."""
         if not chunks:
             return []
         
@@ -205,7 +200,6 @@ class PgVectorStore:
         return prepared
     
     def _get_context(self, chunk_text: str, window_size: int = 100) -> str:
-        """Get surrounding context for a chunk."""
         if len(chunk_text) <= window_size * 2:
             return chunk_text
         start = chunk_text[:window_size]
@@ -213,7 +207,6 @@ class PgVectorStore:
         return f"{start}...{end}"
     
     async def get_stats(self, db: AsyncSession, doc_id: int) -> Dict[str, Any]:
-        """Get chunk statistics for a document."""
         result = await db.execute(
             select(func.count()).select_from(DocumentChunk).where(
                 DocumentChunk.document_id == doc_id

@@ -14,6 +14,9 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 def _build_extraction_dict(result, include_metadata: bool = False) -> Dict[str, Any]:
+    if isinstance(result, dict):
+        return result
+
     data: Dict[str, Any] = {
         "text_blocks": [
             {
@@ -66,9 +69,26 @@ def _build_extraction_dict(result, include_metadata: bool = False) -> Dict[str, 
 async def _ensure_extraction_cached(python_doc_id: str, doc) -> None:
     if python_doc_id in extraction_cache:
         return
+
+    info_dir = Path(getattr(settings, "pdf_information_dir", "./pdf-information"))
+    info_file = info_dir / f"{python_doc_id}_data.json"
+    if info_file.exists():
+        try:
+            with open(info_file, "r", encoding="utf-8") as f:
+                extraction_cache[python_doc_id] = json.load(f)
+            logger.info(f"Loaded extraction artifact from disk for {python_doc_id}")
+            return
+        except Exception as e:
+            logger.warning(f"Failed reading disk extraction artifact for {python_doc_id}: {e}")
+
     file_path = Path(settings.uploads_dir) / doc.filename
+    if not file_path.exists():
+        raise FileNotFoundError(f"Document file {doc.filename} does not exist on disk.")
+
+    logger.info(f"Running fallback extraction on web process for {python_doc_id}...")
     result = await asyncio.to_thread(pdf_pipeline.extract, str(file_path), python_doc_id)
     extraction_cache[python_doc_id] = _build_extraction_dict(result)
+
 
 
 async def _get_document_by_id(db: AsyncSession, doc_id: int) -> Document | None:

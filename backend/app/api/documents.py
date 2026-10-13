@@ -211,25 +211,42 @@ async def index_document(python_doc_id: str, config: ChunkConfig, db: AsyncSessi
     
     await _ensure_extraction_cached(python_doc_id, doc)
     
-    chunks = [
-        {
-            "text": b["text"],
-            "page": b["page"],
-            "type": b.get("type", "text"),
-            "section": b.get("section", "")
-        }
-        for b in extraction_cache[python_doc_id]["text_blocks"]
-    ]
+    doc_cache = extraction_cache[python_doc_id]
+    advanced_chunks = doc_cache.get("chunks_advanced", [])
+    if advanced_chunks:
+        chunks = [
+            {
+                "text": c["text"],
+                "page": c.get("page_start", 1),
+                "type": c.get("chunk_type", "text"),
+                "section": " > ".join(c.get("heading_path", [])) if c.get("heading_path") else "",
+            }
+            for c in advanced_chunks
+        ]
+        already_chunked = True
+    else:
+        chunks = [
+            {
+                "text": b["text"],
+                "page": b["page"],
+                "type": b.get("type", "text"),
+                "section": b.get("section", "")
+            }
+            for b in doc_cache.get("text_blocks", [])
+        ]
+        already_chunked = False
     
     result = await vector_store.index_document(
         db=db,
         doc_id=doc.id,
         chunks=chunks,
         chunk_size=config.chunk_size,
-        overlap=config.overlap
+        overlap=config.overlap,
+        already_chunked=already_chunked,
     )
     
     return IndexResponse(**result)
+
 
 @router.post("/documents/{python_doc_id}/search")
 async def search_document(python_doc_id: str, query: dict, db: AsyncSession = Depends(get_db)):
